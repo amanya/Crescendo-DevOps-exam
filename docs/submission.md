@@ -42,6 +42,10 @@ These screenshots come from authenticated, nonpersistent Chromium sessions on th
 
 ![Magnolia Travel demo after instance replacement](evidence/p07-travel.jpg)
 
+## PR validation
+
+[PR #2](https://github.com/amanya/Crescendo-DevOps-exam/pull/2) is open for review. [Source-validation run 38739045709](https://github.com/amanya/Crescendo-DevOps-exam/actions/runs/38739045709) passed both actual jobs at `4e5c110`: formatting/validation and the trusted OIDC remote-state plan. CI verified the original lineage and all 33 current managed IDs, then reported plan exit 0 with 33 no-op actions. Manual review inspection found no submitted reviews and no requested reviewers. Check both jobs on the latest PR head again before merging; the handoff documentation commit reruns the same workflow.
+
 ## Submission access and decisions
 
 The exam requests a public repository. [amanya/Crescendo-DevOps-exam](https://github.com/amanya/Crescendo-DevOps-exam) remains private at the user's explicit request. The user must obtain acceptance of private submission or authorize a different visibility decision. An anonymous reviewer cannot inspect its source, PR, checks, or screenshots hosted in the repository. The CloudFront endpoint is publicly reachable, but authenticated access still requires the authorized demo process.
