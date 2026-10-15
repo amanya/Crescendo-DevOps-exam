@@ -46,9 +46,9 @@ CI uses GitHub OIDC and three repository variables: `AWS_PLAN_ROLE_ARN`, `TF_STA
 
 ## Assumptions and limitations
 
-This is a development environment with one instance. Content survives instance reboots, however, replacing the instance automatically reinstalls everything causing date being lost. There are no CMS backups or automatic failover.
+This is a development environment with one instance. Content survives instance reboots. Replacing the instance automatically reinstalls Magnolia and deletes all CMS content. There are no CMS backups or automatic failover.
 
-Browser traffic uses HTTPS. Connections from CloudFront to the load balancer and from the load balancer to the instance use HTTPT One NAT Gateway serves both zones. This is an author-only demo with embedded storage and no separate public publishing instance. AWS charges continue while the stack is running; see [teardown](docs/operations.md#teardown).
+Browser traffic uses HTTPS. Connections from CloudFront to the load balancer and from the load balancer to the instance use HTTP. One NAT Gateway serves both zones. This is an author-only demo with embedded storage and no separate public publishing instance. AWS charges continue while the stack is running; see [teardown](docs/operations.md#teardown).
 
 ## Documentation
 

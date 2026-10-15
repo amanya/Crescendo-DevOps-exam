@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render P02 with Terraform and check syntax without running the bootstrap."""
+"""Render application templates with Terraform and check syntax without running the bootstrap."""
 
 import argparse
 import hashlib
@@ -18,7 +18,7 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     templates = root / 'infra/templates'
-    output = root / 'build/p02'
+    output = root / 'build/provisioning'
     output.mkdir(parents=True, exist_ok=True)
     service = f'templatefile({json.dumps(str(templates / "magnolia.service.tftpl"))}, {{}})'
     nginx = f'templatefile({json.dumps(str(templates / "nginx.conf.tftpl"))}, {{}})'
@@ -28,7 +28,7 @@ def main():
     )
     expression = f'jsonencode({{bootstrap={bootstrap}, service={service}, nginx={nginx}}})'
     # No provider configuration, AWS credentials, or state from infra is needed.
-    with tempfile.TemporaryDirectory(prefix='crescendo-p02-') as work:
+    with tempfile.TemporaryDirectory(prefix='crescendo-provisioning-') as work:
         result = subprocess.run(['terraform', 'console', '-no-color'], cwd=work,
                                 input=expression + '\n', text=True, capture_output=True, check=True)
     rendered = json.loads(json.loads(result.stdout))
@@ -69,7 +69,7 @@ def verify_archive(path, bootstrap):
         assert b'H2PersistenceManager' in persistence and b'FileDataStore' in persistence
         # Apply the real configuration transform to an isolated copy. This checks
         # paths and XML assertions against the selected archive without starting Java.
-        with tempfile.TemporaryDirectory(prefix='crescendo-p02-archive-') as work:
+        with tempfile.TemporaryDirectory(prefix='crescendo-provisioning-archive-') as work:
             app = Path(work)
             for relative in ['conf/server.xml', 'webapps/magnoliaAuthor/WEB-INF/config/default/magnolia.properties']:
                 target = app / relative
