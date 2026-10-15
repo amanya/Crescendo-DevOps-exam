@@ -19,7 +19,7 @@ P07 remains In progress only for user-managed reviewer invitations and final sub
 - Keep content through reboots and stop/start cycles. Replacing the instance reinstalls the software and starts a fresh CMS.
 - Request path: browser -> CloudFront -> ALB -> Nginx -> Tomcat/Magnolia.
 - Run Terraform formatting checks, validation, and a real plan on trusted PRs through GitHub Actions.
-- Document architecture, setup, required configuration/secrets, assumptions, limitations, and teardown in the README.
+- Keep the README to a high-level overview. Document architecture in `docs/architecture.md` and setup, required configuration, operations, recovery, and teardown in `docs/operations.md`.
 - The user authorized making the repository public again on 2026-10-15, satisfying the exam's visibility requirement. Keep sanitized CloudFront evidence and walkthrough notes available. The user will send the requested reviewer invitations and handle final submission manually.
 - Leave a separate data volume, RDS, automatic instance replacement, and application high availability for later iterations.
 
@@ -204,6 +204,8 @@ scripts/                        Local operational helpers, if needed
 Give remote-state bootstrap configuration a small directory of its own if needed. Keep Terraform simple for this single-environment exercise; a reusable module framework isn't needed.
 
 ## Review checkpoints
+
+README simplification (2026-10-15): Verified. Reduced the README from 432 to 33 lines with purpose, application links, a request-path diagram, main tradeoffs, and documentation links. Removed internal task IDs and review history. Architecture and the previously reviewed detailed diagrams now live in `docs/architecture.md`; setup, deployment, checks, state recovery, and teardown live in `docs/operations.md`. Updated submission references. Checked 17 local documentation links, balanced code fences in all five changed documents, absence of task IDs in the README, and `git diff --check`. Cross-checked runtime versions, backend settings, CloudFront behavior, lifecycle limits, and CI boundaries against the existing documentation and Terraform source. No infrastructure change or blocker. Next step remains user-managed reviewer invitations and submission.
 
 README diagram clarity review (2026-10-15): Verified. Split browser requests, outbound access/Systems Manager, and Terraform/CI into three diagrams. Ubuntu package repositories, the Magnolia download server, and Systems Manager APIs now have separate labels. Nginx and Tomcat/Magnolia are grouped inside one EC2 instance; the Internet Gateway is attached to the VPC rather than placed in a subnet. Cross-checked against the network, compute, ALB, bootstrap IAM, and Nginx definitions. All three diagrams parsed and rendered with Mermaid 11 and passed visual inspection; Markdown fences, local file links, and `git diff --check` pass. HTTP origin hops, security-group restrictions, the empty second private subnet, single-zone limits, and disk lifecycle remain documented. Only README and plan changed. No blocker; P07's next step remains user-managed reviewer invitations and submission.
 

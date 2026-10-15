@@ -1,11 +1,11 @@
 # Submission and walkthrough
 
-The development application runs at [the CloudFront author URL](https://d2xpkbus8fu2t7.cloudfront.net/magnoliaAuthor/). The stack stays running for review. Use the [README](../README.md) for setup, configuration, operations, troubleshooting, and teardown; [the plan](plan.md) records acceptance and validation evidence.
+The development application runs at [the CloudFront author URL](https://d2xpkbus8fu2t7.cloudfront.net/magnoliaAuthor/). The stack stays running for review. Use [setup and operations](operations.md) for configuration, deployment, troubleshooting, and teardown; [the plan](plan.md) records acceptance and validation evidence.
 
 ## Walkthrough notes
 
 1. Open the CloudFront URL and show the styled Magnolia login page. The unauthenticated author response is HTTP 401 by design. The readiness URL must return exact HTTP 200 after Magnolia finishes initialization.
-2. Explain the diagram in the README: CloudFront terminates browser HTTPS, forwards all application request data with caching disabled, and reaches the two-zone ALB over HTTP. ALB-sourced requests reach Nginx on one private EC2 instance, then Tomcat on loopback. The instance has no public IP or inbound SSH. Operators use Systems Manager through NAT.
+2. Explain the [architecture diagrams](architecture.md): CloudFront terminates browser HTTPS, forwards all application request data with caching disabled, and reaches the two-zone ALB over HTTP. ALB-sourced requests reach Nginx on one private EC2 instance, then Tomcat on loopback. The instance has no public IP or inbound SSH. Operators use Systems Manager through NAT.
 3. Show the lifecycle evidence below. The OS, application, and embedded Jackrabbit/H2 repository share one 30 GiB gp3 root volume. Reboot keeps the volume and content. Terraform replacement deletes the volume and initializes a new demo repository. Rebuilds need no manual application setup.
 4. Show the P07 PR checks. Formatting and validation cover both roots without AWS credentials. A trusted same-repository PR uses GitHub OIDC and a read-only planning role, checks state lineage and all managed identities, and runs a real workload plan. CI can manage only the native lock object; it cannot deploy or write workload state. Deployments remain manual, using an inspected saved plan.
 5. Explain state separation: `infra/` uses versioned S3 state and native locking. `bootstrap/` owns the backend and CI role, with restricted local state and a separate versioned recovery copy. State recovery does not recover CMS content.
