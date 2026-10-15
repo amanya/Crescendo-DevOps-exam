@@ -22,7 +22,7 @@ Terraform state lives in a versioned S3 bucket; locking prevents concurrent oper
 
 ## How to run
 
-Prerequisites: Git, Terraform `~> 1.16.6`, AWS CLI v2, Python 3, and AWS access through profile `default` in `eu-central-1`. The configuration targets account `317399646022`. For another environment, review the account, backend, and GitHub settings and [bootstrap the backend](docs/operations.md#backend-bootstrap) first.
+Prerequisites: Git, Terraform `~> 1.16.6`, AWS CLI v2, Python 3, and AWS access through profile `default` in `eu-central-1`. The configuration targets account `317399646022` and uses the existing [remote state backend](docs/operations.md#backend-state).
 
 From the repository root, for the existing backend:
 
@@ -53,5 +53,5 @@ Browser traffic uses HTTPS. Connections from CloudFront to the load balancer and
 ## Documentation
 
 - [Architecture](docs/architecture.md): components, network boundaries, application provisioning, and CI design.
-- [Setup and operations](docs/operations.md): prerequisites, deployment, checks, recovery, and teardown.
+- [Operations](docs/operations.md): deployment, checks, troubleshooting, state recovery, and teardown.
 - [Walkthrough and evidence](docs/submission.md): verified behavior and screenshots.
