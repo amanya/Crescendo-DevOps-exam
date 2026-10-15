@@ -8,6 +8,8 @@ P01 through P07 passed independent technical review. P07 PR #2 is merged into `m
 
 P07 remains In progress only for user-managed reviewer invitations and final submission/walkthrough arrangements. GitHub currently shows neither requested collaborator nor any pending invitations. The stack remains running. The user plans a separate round of cost, security, and deployed-resource reviews after this completion review.
 
+Architecture documentation review (2026-10-15): revised `docs/architecture.md` with the humanizer skill. The introduction now explains where Magnolia runs and how users reach it before describing the Terraform directories. The remaining prose explains request routing, administration, provisioning, data loss on replacement, and CI permissions in plain language. Cross-checked those descriptions against the existing Terraform, Nginx, systemd, bootstrap, and workflow files. Diagrams, headings, the component table, and link targets are preserved; local links and whitespace checks pass. At the user's request, shortened the CloudFront access limitation to one sentence. No implementation or scope changes were made. The next step is to answer the user's architecture questions in chat; P07's manual submission steps remain outstanding.
+
 ## Agreed scope
 
 - AWS profile: `default`; workload region: `eu-central-1`.
