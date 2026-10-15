@@ -6,7 +6,7 @@ Updated: 2026-10-15 (Europe/Madrid)
 
 P01 is Verified. Git is initialized on `main` with an initial local commit. Terraform 1.16.6 is installed, and the minimal configuration has initialized with AWS provider 6.69.0. Formatting, validation, ignore-rule checks, and the sensitive-content review passed.
 
-P01 through P04 reviews passed. P05 is Verified: CloudFront is deployed, browser and authenticated HTTP checks pass through HTTPS, and the replacement private instance serves Magnolia through a healthy ALB target. The final Terraform plan reports no drift. Login, CSRF rejection, AdminCentral, Travel content/assets, session reuse, anonymous isolation, and logout passed without exporting credentials or cookies. Browser HTTPS terminates at CloudFront; origin connections use unencrypted HTTP for this development scope. P06 remains Ready to migrate the preserved local state and add PR checks. P07's P05 dependency is satisfied; P07 remains Queued for P06. The stack remains running.
+P01 through P05 reviews passed. P05 is Verified: CloudFront is deployed, browser and authenticated HTTP checks pass through HTTPS, and the replacement private instance serves Magnolia through a healthy ALB target. Independent review confirmed the live CloudFront settings, passing anonymous checks, and a fresh no-change drift plan. Login, CSRF rejection, AdminCentral, Travel content/assets, session reuse, anonymous isolation, and logout passed without exporting credentials or cookies. Browser HTTPS terminates at CloudFront; origin connections use unencrypted HTTP for this development scope. P06 is In progress: bootstrap protected S3 state, preserve and migrate the workload, then validate GitHub OIDC planning in an actual PR. P07's P05 dependency is satisfied; P07 remains Queued for P06. The stack remains running.
 
 ## Agreed scope
 
@@ -47,7 +47,7 @@ Tasks move through Ready, In progress, and Verified. Queued tasks are waiting fo
 | P03 | VPC, EC2, and ALB | Verified | P01, P02 interface | Primary agent |
 | P04 | Application integration | Verified | P02, P03 | Primary agent |
 | P05 | CloudFront | Verified | P04 | Primary agent |
-| P06 | Remote state and PR checks | Ready | P01, P03 | Unassigned |
+| P06 | Remote state and PR checks | In progress | P01, P03 | Primary agent |
 | P07 | Lifecycle and submission | Queued | P04, P05, P06 | Unassigned |
 
 ### P00: AWS access
@@ -153,10 +153,15 @@ Done when Magnolia works in a browser through the CloudFront URL and we've docum
 
 - Set up protected remote Terraform state. Document how to bootstrap it, migrate state, and clean it up.
 - Configure repository-scoped AWS OIDC access for trusted PR planning.
+- Publish the reviewed source repository as needed to run the actual PR checks. Collaborator invitations and final submission preparation remain P07 work.
 - Run `terraform fmt -check`, `terraform validate`, and `terraform plan` on PRs.
 - Decide how to handle untrusted/fork PRs without giving them AWS access. Keep deployment manual for the first version.
 
 Done when an actual PR passes the checks and produces a real plan against the intended state.
+
+P06 must preserve and migrate the existing local state, verify the same resource identities after migration, and confirm the workload plan still has no changes. The provider currently sets `profile = "default"`; adjust authentication so local default-profile use and GitHub's OIDC environment credentials both work. The real PR requires publishing the source repository during P06. Use native S3 state locking to keep the backend small, and restrict the CI role to the reads needed for planning plus access to the state and its lock object.
+
+P06 started on 2026-10-15. Preserve the uncommitted P05 independent review update. The next step is a separate Terraform bootstrap for the state bucket and CI identity; migration and actual PR checks must pass before verification. GitHub publication is authorized at `amanya/Crescendo-DevOps-exam`. No workload apply or instance replacement is part of P06.
 
 ### P07: Verification and submission
 
@@ -164,7 +169,7 @@ Done when an actual PR passes the checks and produces a real plan against the in
 - Replace only the instance through Terraform. Check that provisioning runs automatically and a fresh CMS loads through the same CloudFront distribution.
 - Finish the README: architecture, prerequisites, commands, configuration, troubleshooting, limitations, and teardown.
 - Capture CloudFront screenshots/video and prepare walkthrough notes.
-- Publish the public `Crescendo-DevOps-exam` repository and invite `tristanamargo-crescendo` and `jeremysummers` as part of submission preparation.
+- Confirm the public `Crescendo-DevOps-exam` repository is ready for submission and invite `tristanamargo-crescendo` and `jeremysummers`.
 
 Done when we have evidence for the lifecycle checks, the documentation matches the deployment, CI passes, and the submission requirements are met.
 
@@ -276,4 +281,5 @@ Agreed on 2026-10-15:
 - P05 browser acceptance: on-instance headless Chromium rendered AdminCentral's Pages and Assets apps and the Travel page/images, reused the session through navigation/reload, kept a separate context anonymous, and restored login after logout and subsequent access. All document requests stayed on CloudFront HTTPS with no ALB URLs, HTTP asset URLs, mixed-content errors, JavaScript page errors, or unexpected destinations. Chromium reported Secure, HttpOnly, `/magnoliaAuthor`, and SameSite=Lax on the session cookie. The browser guard blocked three optional external HTTPS font/widget services (`fonts.googleapis.com`, `cdn.jsdelivr.net`, `static.addtoany.com`); those services remain untested, while local content/images passed. Only sanitized screenshots and results leave EC2; no trace, HAR, video, persistent profile, or cookie-state file is produced.
 - P05 final infrastructure check: AWS MCP confirmed distribution `E178D8X4DHIIP9` Deployed and the replacement ALB target healthy after authenticated tests. The final drift plan in ignored `build/p05/final-drift-plan.txt` exited 0 with no changes. P05 acceptance criteria pass; P06 remains Ready, and P07's P05 dependency is satisfied while P06 remains outstanding. No P05 blocker remains. Remote-state migration, CI, and publication were not started; the stack stays running at this review checkpoint.
 - P05 evidence and test tooling: the browser checker uses Playwright 1.64.0 and a nonpersistent headless Chromium context, with all credential handling on EC2. The sanitized AdminCentral screenshot is `docs/evidence/p05-admincentral.jpg`. Temporary browser tooling and screenshot staging are separate from application provisioning and are removed after evidence export; package support libraries do not change the proxy/application configuration.
-- P05 checkpoint review: inspected the final browser helper, README/plan changes, and sanitized screenshot. The final helper passed using DOM/application readiness checks; temporary browser tooling, browser downloads, and screenshot staging were removed. AWS MCP confirmed the target still healthy afterward. Python compilation, Terraform formatting, whitespace, local documentation links, sensitive-content patterns, and local-state/artifact ignore checks passed. The verification commit records P05 as Verified without changing Terraform or the deployed application after the implementation commit. Stop here for review; P06 is next.
+- P05 checkpoint review: inspected the final browser helper, README/plan changes, and sanitized screenshot. The final helper passed using DOM/application readiness checks; temporary browser tooling, browser downloads, and screenshot staging were removed. AWS MCP confirmed the target still healthy afterward. Python compilation, Terraform formatting, whitespace, local documentation links, sensitive-content patterns, and local-state/artifact ignore checks passed. The verification commit records P05 as Verified without changing Terraform or the deployed application after the implementation commit.
+- P05 independent review: checked implementation commit `9e9ea00` and verification commit `ff3ba22` from a clean working tree. Reviewed CloudFront, ALB ingress, Nginx forwarding/caching, both verification helpers, recorded authenticated/browser results, and the sanitized screenshot. Formatting, Python compilation, whitespace, archive integrity/version checks, repeatable transforms, and provisioning rendering/syntax checks passed. Re-ran the anonymous CloudFront checker successfully for HTTPS redirects, readiness, uncached errors, login assets, cookie attributes, and protocol spoof handling. Live AWS MCP checks confirmed the expected distribution Deployed, its origin/method/error-TTL settings, and the replacement target healthy. A fresh drift plan in ignored `build/p05/review-drift-plan.txt` exited 0 with no changes. Authenticated tests were reviewed from P05 evidence without reading credentials or repeating them. No blocking findings; documented HTTP-origin and prefix-list limitations remain. P06 is next.

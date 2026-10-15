@@ -1,0 +1,130 @@
+name: Trusted Terraform plan
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Remote state plan
+    # This guard lives on main. A caller cannot bypass it by editing a PR workflow.
+    if: >-
+      github.repository == 'amanya/Crescendo-DevOps-exam' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: terraform-workload-plan
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_IN_AUTOMATION: 'true'
+      TF_INPUT: 'false'
+      AWS_REGION: eu-central-1
+      AWS_EC2_METADATA_DISABLED: 'true'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+      - name: Check required repository variables
+        env:
+          ROLE: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          LINEAGE: ${{ vars.TF_STATE_LINEAGE }}
+          IDENTITIES: ${{ vars.TF_STATE_IDENTITIES_SHA256 }}
+        run: test -n "$ROLE" && test -n "$LINEAGE" && test -n "$IDENTITIES"
+      - name: Verify OIDC claims without logging the token
+        env:
+          EXPECTED_SUB: repository_id:1420637563:repository_owner_id:4490611:pull_request:job_workflow_ref:amanya/Crescendo-DevOps-exam/.github/workflows/terraform-plan.yml@refs/heads/main
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, urllib.request
+          request = urllib.request.Request(
+              os.environ['ACTIONS_ID_TOKEN_REQUEST_URL'] + '&audience=sts.amazonaws.com',
+              headers={'Authorization': 'bearer ' + os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']})
+          with urllib.request.urlopen(request) as response:
+              token = json.load(response)['value']
+          payload = token.split('.')[1]
+          claims = json.loads(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4)))
+          # These claims are public identifiers. Never print the JWT or other claims.
+          print(json.dumps({key: claims[key] for key in ('sub', 'aud', 'job_workflow_ref')}))
+          assert claims['sub'] == os.environ['EXPECTED_SUB'], 'Unexpected OIDC subject'
+          assert claims['aud'] == 'sts.amazonaws.com', 'Unexpected OIDC audience'
+          PY
+      - uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: eu-central-1
+          allowed-account-ids: '317399646022'
+          role-duration-seconds: 900
+          role-session-name: crescendo-plan-${{ github.run_id }}
+          mask-aws-account-id: true
+      - name: Check migrated state and plan
+        env:
+          EXPECTED_LINEAGE: ${{ vars.TF_STATE_LINEAGE }}
+          EXPECTED_IDENTITIES: ${{ vars.TF_STATE_IDENTITIES_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          export TF_DATA_DIR="$work/backend"
+          # Keep state, plans, and diagnostics on the disposable runner only.
+          if ! terraform -chdir=infra init -input=false -lockfile=readonly >"$work/init.log" 2>&1; then
+            echo '::error::Backend initialization failed; no private diagnostics published.'
+            exit 1
+          fi
+          terraform -chdir=infra state pull >"$work/state.json"
+          python3 - "$work/state.json" <<'PY'
+          import hashlib, json, os, sys
+          state = json.load(open(sys.argv[1]))
+          identities = []
+          for resource in state['resources']:
+              if resource['mode'] == 'managed':
+                  for instance in resource['instances']:
+                      identities.append([resource.get('module', ''), resource['type'], resource['name'], instance.get('index_key'), instance['attributes']['id']])
+          digest = hashlib.sha256(json.dumps(sorted(identities, key=lambda x: json.dumps(x)), separators=(',', ':')).encode()).hexdigest()
+          assert state['lineage'] == os.environ['EXPECTED_LINEAGE'], 'State lineage mismatch'
+          assert digest == os.environ['EXPECTED_IDENTITIES'], 'Managed resource identity mismatch'
+          print(f'Migrated state verified: lineage and all {len(identities)} managed resource IDs match.')
+          PY
+          set +e
+          terraform -chdir=infra plan -input=false -lock-timeout=5m -detailed-exitcode -out="$work/workload.tfplan" >"$work/plan.log" 2>&1
+          status=$?
+          set -e
+          case "$status" in
+            0|2) ;;
+            *)
+              echo '::error::Terraform plan failed; no private plan contents published.'
+              # Report only missing API action names, never their surrounding output.
+              python3 - "$work/plan.log" <<'PY'
+          import re, sys
+          text = open(sys.argv[1]).read()
+          for action in sorted(set(re.findall(r'(?:perform|action):? ([a-z0-9-]+:[A-Za-z]+)', text))):
+              print('Denied API action: ' + action)
+          PY
+              exit "$status"
+              ;;
+          esac
+          terraform -chdir=infra show -json "$work/workload.tfplan" >"$work/plan.json"
+          python3 - "$work/plan.json" "$status" <<'PY'
+          import collections, json, os, sys
+          plan = json.load(open(sys.argv[1]))
+          counts = collections.Counter('/'.join(r['change']['actions']) for r in plan.get('resource_changes', []) if r['mode'] == 'managed')
+          summary = f'Terraform plan exit {sys.argv[2]}; managed resource actions: {dict(sorted(counts.items()))}'
+          print(summary)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write('Migrated state lineage and managed resource identities match.\n\n' + summary + '\n\nDeployment remains manual.\n')
+          PY
