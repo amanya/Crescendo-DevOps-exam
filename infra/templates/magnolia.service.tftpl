@@ -1,0 +1,32 @@
+[Unit]
+Description=Magnolia CE 6.3.27 on bundled Tomcat 9.0.121
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=1800
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=magnolia
+Group=magnolia
+WorkingDirectory=/opt/magnolia
+Environment=JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+Environment=CATALINA_HOME=/opt/magnolia
+Environment=CATALINA_BASE=/opt/magnolia
+ExecStart=/opt/magnolia/bin/catalina.sh run
+ExecStartPost=/usr/local/bin/magnolia-ready
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=1500
+TimeoutStopSec=120
+SuccessExitStatus=143
+UMask=0027
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=magnolia
+
+[Install]
+WantedBy=multi-user.target

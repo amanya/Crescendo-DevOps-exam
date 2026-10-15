@@ -6,7 +6,7 @@ Updated: 2026-10-15 (Europe/Madrid)
 
 P01 is Verified. Git is initialized on `main` with an initial local commit. Terraform 1.16.6 is installed, and the minimal configuration has initialized with AWS provider 6.69.0. Formatting, validation, ignore-rule checks, and the sensitive-content review passed.
 
-The P01 review checkpoint is ready. The next task is P02, which will choose the Magnolia CE artifact and Java/Tomcat versions. EC2 size and origin encryption also remain undecided. No infrastructure has been deployed.
+P01 review passed. P02 is Verified against its preparation criteria: the official Magnolia CE package is downloaded and pinned, compatibility is checked, and the provisioning templates pass local checks. The P02/P03 interface is recorded below. EC2 execution and all application runtime claims remain pending P04. EC2 size and origin encryption remain undecided. No infrastructure has been deployed.
 
 ## Agreed scope
 
@@ -43,7 +43,7 @@ Tasks move through Ready, In progress, and Verified. Queued tasks are waiting fo
 | --- | --- | --- | --- | --- |
 | P00 | AWS access | Verified | None | Primary agent |
 | P01 | Repository and tooling | Verified | P00 | Primary agent |
-| P02 | Magnolia provisioning | Ready | P00 | Unassigned |
+| P02 | Magnolia provisioning | Verified | P00 | Primary agent |
 | P03 | VPC, EC2, and ALB | Ready | P01 | Unassigned |
 | P04 | Application integration | Queued | P02, P03 | Unassigned |
 | P05 | CloudFront | Queued | P04 | Unassigned |
@@ -73,6 +73,40 @@ Verified on 2026-10-15; validation evidence is recorded below. P03's P01 depende
 - Before infrastructure work proceeds in parallel, agree on the Nginx target port, Magnolia context path, readiness check, and Terraform template inputs.
 
 Done when we've checked artifact access and version compatibility and have an installation procedure ready to deploy. P04 checks that it runs on EC2.
+
+Verified on 2026-10-15 for those preparation criteria; evidence is recorded below. This checkpoint stops before P03 infrastructure work. Runtime acceptance remains with P04.
+
+### P02/P03 interface
+
+P02 owns `infra/templates/bootstrap.sh.tftpl`, `infra/templates/nginx.conf.tftpl`, `infra/templates/magnolia.service.tftpl`, and the local checker `scripts/check-provisioning.py`. The primary agent maintains README and plan changes. No other agent was dispatched. P03 can use this interface without changing the application templates:
+
+| Item | Contract |
+| --- | --- |
+| Magnolia | CE Travel Demo 6.3.27, official public Nexus ZIP linked from [Magnolia's 6.3 releases](https://docs.magnolia-cms.com/product-docs/6.3/releases/); exact URL and SHA-256 are in README and bootstrap |
+| Artifact pin | SHA-256 `8ba8ea6bcaffb7c6f6895d2ed024e322bfed546f6e475c710018b7a3b16b1a99`; top directory `travel-demo-community-webapp-6.3.27/apache-tomcat-9.0.121` |
+| Runtime | Bundled Tomcat 9.0.121; Ubuntu `openjdk-17-jre-headless`, Java home `/usr/lib/jvm/java-17-openjdk-amd64`; keep repository patch updates |
+| OS and CPU | Ubuntu Server 24.04 LTS with cloud-init/systemd, x86_64 (`amd64`). Bootstrap rejects another release or architecture. P03 selects the AMI |
+| Sizing | Heap `-Xms256m -Xmx2048m`; allow at least 4 GiB RAM. P03 still chooses instance and root-disk sizes; P04 checks memory and disk use |
+| Terraform rendering | `nginx.conf.tftpl` and `magnolia.service.tftpl` each take `{}`. Base64-encode each rendered result and pass strings `nginx_config_b64` and `magnolia_service_b64` to `bootstrap.sh.tftpl`; assign rendered bootstrap to `user_data`. README includes the complete expression. No credential inputs |
+| Fixed configuration | Package URL/checksum, ports, paths, and context are pinned in the templates. Keep them together when reviewing an update. User-data changes should replace the instance so the package and CMS are rebuilt |
+| Nginx target | HTTP `80`, default host; only ALB security-group ingress. `/` redirects to `/magnoliaAuthor/`. Other webapps are removed |
+| Tomcat | HTTP `127.0.0.1:8080`; shutdown socket disabled; no AJP connector. Do not expose port 8080. Local Nginx is the trusted forwarded-header proxy |
+| Magnolia context | `/magnoliaAuthor`, author only, with the CE Travel Demo. No second public webapp or publishing target |
+| Readiness | ALB GET `/magnoliaAuthor/.rest/health/ready` through Nginx on port 80; matcher `200` only, no redirect success codes. Suggested interval 30 seconds, timeout 5 seconds, healthy threshold 2, unhealthy threshold 3. Confirm timings in P04 |
+| Initialization | `magnolia.update.auto=true`; generate a local random initial administrator password directly into a restricted file and use Magnolia's file-based bootstrap setting; disable interactive fallback; leave the admin readiness probe enabled |
+| CMS configuration | Keep `magnolia.home` at the webapp root to retain bundled modules and author MicroProfile configuration. Preserve bundled `jackrabbit-bundle-h2-search.xml` with embedded H2 and file datastore |
+| Data paths | `/var/lib/magnolia/repositories` holds databases, datastore, and indexes; sibling `tmp`, `cache`, `history`, and `keys` directories hold other mutable files. `/etc/magnolia/superuser-password` is `root:magnolia`, `0640`; `/etc/magnolia` is `0750` |
+| Installation and logs | Tomcat/webapp `/opt/magnolia`; Magnolia logs `/var/log/magnolia`; Tomcat logs/work/temp inside `/opt/magnolia`; bootstrap `/var/log/magnolia-bootstrap.log` and cloud-init output; process output in the Magnolia journal; Nginx logs `/var/log/nginx/magnolia-{access,error}.log` |
+| Service order | Configure packages/files, run native Nginx and unit checks, enable services, start Magnolia, wait for exact 200 readiness, then start Nginx. The Nginx systemd drop-in uses `Wants`/`After=magnolia.service` for subsequent boots. It may serve an unhealthy response if Magnolia fails |
+| Startup failure | ERR trap logs line and exit status; JVM runs in foreground under systemd. Readiness tries 120 times with 5-second pauses and up to 5-second requests; unit startup timeout 1500 seconds. Restart on failure after 15 seconds, capped at 3 starts per 1800 seconds |
+| Persistence | One root volume, no extra mounts. Reboots reuse directories. Bootstrap reruns preserve a matching installation and data; a new instance starts fresh. P03 must set root-volume delete-on-termination and omit explicit encryption/key overrides |
+| Network prerequisites | Outbound DNS plus HTTP/HTTPS access to Ubuntu package repositories and HTTPS to `nexus.magnolia-cms.com`, available before cloud-init installs packages. P03 owns routing/NAT and Systems Manager access |
+
+The selected package uses Magnolia 6.3 requirements despite the exam's 6.2 documentation link. [Magnolia's 6.3 stack](https://docs.magnolia-cms.com/performance-tuning/6.3/system-requirements/certified-stack/) and [Apache's version table](https://tomcat.apache.org/whichversion.html) support Java 17 with Tomcat 9. [Magnolia configuration](https://docs.magnolia-cms.com/product-docs/6.3/administration/architecture/configuration-management/), [administrator setup](https://docs.magnolia-cms.com/product-docs/6.3/administration/security/set-superuser-password/), and [readiness API](https://docs.magnolia-cms.com/product-docs/6.3/developing/api/health-check-api/) explain the first-run and health behavior. The downloaded core and REST source archives also confirm automatic module installation and readiness registration for module initialization, datastore availability, and administrator setup.
+
+P04 must verify apt installation and the native systemd unit, first-run modules and administrator setup without browser intervention, initialized sample content and private login, readiness returning 200 only after initialization, unhealthy responses while Magnolia is stopped or failing, service recovery, ALB registration, and HTTP redirects/assets/sessions. Check a reboot reuses the data paths and credentials; P07 records the full content-retention and instance-replacement demonstration. Do not paste credential values or unsanitized application logs into evidence. Browser HTTPS and the forwarded protocol through CloudFront remain P05 checks.
+
+P02 limitations: no EC2 execution; Java/Nginx patch versions follow apt repositories; the ZIP checksum is locally calculated from an official HTTPS download without a separate vendor signature; embedded H2, one author webapp, one disk, and no content backup remain deliberate exam limits. The local installation checker does not prove application readiness, reboot persistence, or successful recovery.
 
 ### P03: Infrastructure
 
@@ -188,4 +222,10 @@ Agreed on 2026-10-15:
 - P01: `git check-ignore` checks passed for 51 excluded paths and 8 retained paths, including `infra/.terraform.lock.hcl`. The rules cover local state, variable files, plans, credentials, environment files, and generated artifacts. Only `infra/` was added to the existing directory layout, with useful configuration files.
 - P01: all seven staged files were reviewed. A sensitive-content pattern scan found no AWS access keys, private keys, GitHub tokens, literal credential assignments, or credentials embedded in URLs. `git diff --cached --check` passed, and local README/plan links resolve. The existing `AGENTS.md` was preserved unchanged and included in the initial local commit.
 - P01: the initial local commit was created on `main` with the instructions, plan, README, ignore rules, Terraform configuration, and provider lock file. No AWS resources have been defined or created, and no plan/apply, remote-state setup, CI, or publication was performed.
-- No current P01 blocker. P02 still needs application version compatibility and artifact-access checks; deployment permissions remain unverified for later tasks.
+- P01 review: checked commit `ca4ffb7` with a clean working tree. Formatting, Terraform validation, representative ignore rules, local documentation links, and whitespace checks passed. Validation required permission for the local provider process to run outside the sandbox. No issues blocking P02 were found.
+- P02 artifact check on 2026-10-15: anonymous HTTPS GET of the official CE Travel Demo 6.3.27 bundle returned HTTP 200 and 251,521,274 bytes. ZIP CRC/integrity passed. Inspected `magnolia-core-6.3.27.jar`, Tomcat `ServerInfo.properties` (`9.0.121`), H2 `2.4.240`, Jackrabbit `2.22.8-magnolia`, and the H2 repository XML. Bootstrap pins the downloaded SHA-256. No archive is tracked.
+- P02 compatibility: fetched official Magnolia 6.3 stack, configuration, and readiness documentation, plus Apache's Tomcat compatibility table and Ubuntu's OpenJDK 17 package/file list. The actual artifact matches Java 17/Tomcat 9 requirements. Administrator setup documentation and exact-version core sources confirm file-based unattended setup is also required in this release.
+- P02 local checks: Terraform's real `templatefile` renderer succeeded for all three templates in an isolated directory, without provider initialization or AWS access. `bash -n` passed for bootstrap, generated `setenv.sh`, and generated readiness helper; embedded Python compiled. The actual archive's properties/XML accepted the provisioning transform twice without further changes, including the loopback connector and disabled shutdown port. Rendered user data is 9,442 bytes, below EC2's 16 KiB raw limit. `scripts/check-provisioning.py --archive <local-zip>` repeats these checks. Core class-file major version 61 confirms Java 17 bytecode. Mocked readiness checks accepted 200 and rejected 302, 503, and connection-failure status; these are local helper checks, not application runtime evidence.
+- P02 configuration checks: ShellCheck 0.11.0 passed the rendered bootstrap and readiness helper with only SC1091 excluded for the target OS's `/etc/os-release`. Nginx 1.24.0 compiled from official source passed `nginx -t` against the rendered site in an HTTP wrapper, relocating log paths into `/tmp` on macOS. No server was started. Docker was unavailable, so native Ubuntu/systemd checks remain P04 work; bootstrap includes `nginx -t` and `systemd-analyze verify` before startup.
+- P02 review: all six changed files were inspected, the P01 review update was preserved, local README/plan links resolve, Terraform formatting and whitespace checks passed, and a sensitive-content pattern scan found no AWS access keys, private keys, GitHub tokens, literal credential values, or credentials in URLs. Generated downloads and rendered files stay outside Git. Unit sections and commands were inspected; native systemd verification remains pending.
+- No current P01/P02 preparation blocker. P02's runtime checks and deployment permissions remain unverified for later tasks. Next: review this local P02 commit, then start P03 using the recorded interface when requested. Stop at this checkpoint.

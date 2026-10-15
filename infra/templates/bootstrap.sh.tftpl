@@ -1,0 +1,154 @@
+#!/bin/bash
+set -Eeuo pipefail
+umask 027
+
+# Cloud-init captures this output too. Never enable shell tracing here.
+exec > >(tee -a /var/log/magnolia-bootstrap.log) 2>&1
+on_error() {
+    local rc=$?
+    echo "Magnolia bootstrap failed at line $1 (exit $rc). Check /var/log/magnolia-bootstrap.log and journalctl -u magnolia."
+    exit "$rc"
+}
+trap 'on_error "$LINENO"' ERR
+
+. /etc/os-release
+[[ "$ID" == ubuntu && "$VERSION_ID" == 24.04 && "$(uname -m)" == x86_64 ]] || {
+    echo 'Expected Ubuntu 24.04 LTS on x86_64.'
+    exit 1
+}
+
+export DEBIAN_FRONTEND=noninteractive
+# Prevent the package post-install hook from exposing the default Nginx site.
+systemctl mask nginx.service
+apt-get -o Acquire::Retries=3 update
+apt-get -o Acquire::Retries=3 install -y --no-install-recommends ca-certificates curl nginx openjdk-17-jre-headless python3 unzip
+
+getent group magnolia >/dev/null || groupadd --system magnolia
+id -u magnolia >/dev/null 2>&1 || useradd --system --gid magnolia --home-dir /var/lib/magnolia --shell /usr/sbin/nologin magnolia
+install -d -m 0750 -o magnolia -g magnolia /var/lib/magnolia /var/lib/magnolia/repositories /var/lib/magnolia/tmp /var/lib/magnolia/cache /var/lib/magnolia/history /var/lib/magnolia/keys /var/log/magnolia
+install -d -m 0750 -o root -g magnolia /etc/magnolia
+
+artifact_sha256=8ba8ea6bcaffb7c6f6895d2ed024e322bfed546f6e475c710018b7a3b16b1a99
+if [[ ! -d /opt/magnolia ]]; then
+    stage=$(mktemp -d /opt/magnolia-install.XXXXXX)
+    trap 'rm -rf "$stage"' EXIT
+    curl --fail --location --silent --show-error --retry 5 --connect-timeout 20 --max-time 600 \
+        https://nexus.magnolia-cms.com/repository/magnolia.public.releases/info/magnolia/demo/travel-demo-community-webapp/6.3.27/travel-demo-community-webapp-6.3.27-tomcat-bundle.zip \
+        -o "$stage/bundle.zip"
+    echo "$artifact_sha256  $stage/bundle.zip" | sha256sum --check --status
+    unzip -q "$stage/bundle.zip" -d "$stage"
+    bundle="$stage/travel-demo-community-webapp-6.3.27/apache-tomcat-9.0.121"
+    test -f "$bundle/webapps/magnoliaAuthor/WEB-INF/lib/magnolia-core-6.3.27.jar"
+    test -f "$bundle/lib/catalina.jar"
+    # Run one author webapp. catalina.sh avoids the bundle's public-app copy hook.
+    find "$bundle/webapps" -mindepth 1 -maxdepth 1 ! -name magnoliaAuthor -exec rm -rf {} +
+    echo "$artifact_sha256" > "$bundle/.artifact-sha256"
+    chown -R magnolia:magnolia "$bundle"
+    chmod -R o-rwx "$bundle"
+    chmod +x "$bundle"/bin/*.sh
+    mv "$bundle" /opt/magnolia
+    rm -rf "$stage"
+    trap - EXIT
+fi
+[[ "$(cat /opt/magnolia/.artifact-sha256)" == "$artifact_sha256" ]]
+test -x /opt/magnolia/bin/catalina.sh
+
+# Write a local bootstrap credential directly to disk; no value enters user data,
+# Terraform state, command arguments, or logs. Re-running keeps the existing file.
+python3 - <<'PY'
+import grp
+import os
+import secrets
+path = '/etc/magnolia/superuser-password'
+if not os.path.exists(path):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+    with os.fdopen(fd, 'w') as stream:
+        stream.write(secrets.token_urlsafe(36) + '\n')
+os.chown(path, 0, grp.getgrnam('magnolia').gr_gid)
+os.chmod(path, 0o640)
+PY
+test -s /etc/magnolia/superuser-password
+
+# Keep magnolia.home at the webapp root: the demo uses it to find bundled config
+# and modules. Move mutable repositories, files, and generated keys explicitly.
+python3 - <<'PY'
+from pathlib import Path
+import xml.etree.ElementTree as ET
+config = Path('/opt/magnolia/webapps/magnoliaAuthor/WEB-INF/config/default/magnolia.properties')
+overrides = {
+    'magnolia.update.auto': 'true',
+    'magnolia.repositories.home': '/var/lib/magnolia/repositories',
+    'magnolia.logs.dir': '/var/log/magnolia',
+    'magnolia.upload.tmpdir': '/var/lib/magnolia/tmp',
+    'magnolia.cache.startdir': '/var/lib/magnolia/cache',
+    'magnolia.exchange.history': '/var/lib/magnolia/history',
+    'magnolia.author.key.location': '/var/lib/magnolia/keys/activation.properties',
+    'magnolia.password.manager.key.location': '/var/lib/magnolia/keys/password-manager.properties',
+    'magnolia.superuser.bootstrap.password_file': '/etc/magnolia/superuser-password',
+    'magnolia.superuser.bootstrap.interactive_setup': 'false',
+}
+lines = [line for line in config.read_text().splitlines() if line.split('=', 1)[0].strip() not in overrides]
+config.write_text('\n'.join(lines) + '\n' + '\n'.join(k + '=' + v for k, v in overrides.items()) + '\n')
+
+server = Path('/opt/magnolia/conf/server.xml')
+tree = ET.parse(server)
+root = tree.getroot()
+root.set('port', '-1')  # systemd stops the foreground JVM with SIGTERM.
+connectors = root.findall('./Service/Connector')
+assert len(connectors) == 1 and connectors[0].get('port') == '8080'
+connectors[0].set('address', '127.0.0.1')
+host = root.find('./Service/Engine/Host')
+host.set('autoDeploy', 'false')
+valve = host.find("Valve[@className='org.apache.catalina.valves.RemoteIpValve']")
+assert valve is not None
+valve.set('internalProxies', '127\\.0\\.0\\.1')
+valve.set('remoteIpHeader', 'x-forwarded-for')
+valve.set('protocolHeader', 'x-forwarded-proto')
+tree.write(server, encoding='utf-8', xml_declaration=True)
+PY
+
+cat > /opt/magnolia/bin/setenv.sh <<'SETENV'
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export CATALINA_OPTS='-Xms256m -Xmx2048m -Djava.awt.headless=true'
+SETENV
+chmod 0750 /opt/magnolia/bin/setenv.sh
+
+cat > /usr/local/bin/magnolia-ready <<'READY'
+#!/bin/bash
+set -euo pipefail
+for ((attempt=1; attempt<=120; attempt++)); do
+    # Exact 200 only: a redirect to setup/login must never mark this ready.
+    status=$(curl --silent --output /dev/null --write-out '%%{http_code}' --connect-timeout 2 --max-time 5 \
+        http://127.0.0.1:8080/magnoliaAuthor/.rest/health/ready) || status=000
+    if [[ "$status" == 200 ]]; then
+        echo 'Magnolia readiness check passed.'
+        exit 0
+    fi
+    if (( attempt % 12 == 0 )); then
+        echo "Waiting for Magnolia readiness (attempt $attempt/120, HTTP $status)."
+    fi
+    sleep 5
+done
+echo 'Magnolia readiness timed out. Check journalctl -u magnolia and /var/log/magnolia.' >&2
+exit 1
+READY
+chmod 0755 /usr/local/bin/magnolia-ready
+
+echo '${magnolia_service_b64}' | base64 --decode > /etc/systemd/system/magnolia.service
+echo '${nginx_config_b64}' | base64 --decode > /etc/nginx/sites-available/magnolia
+rm -f /etc/nginx/sites-enabled/default
+ln -sfn /etc/nginx/sites-available/magnolia /etc/nginx/sites-enabled/magnolia
+install -d /etc/systemd/system/nginx.service.d
+cat > /etc/systemd/system/nginx.service.d/magnolia.conf <<'ORDER'
+[Unit]
+Wants=magnolia.service
+After=magnolia.service
+ORDER
+nginx -t
+systemd-analyze verify /etc/systemd/system/magnolia.service
+systemctl unmask nginx.service
+systemctl daemon-reload
+systemctl enable magnolia.service nginx.service
+systemctl restart magnolia.service
+systemctl restart nginx.service
+echo 'Magnolia provisioning complete; Nginx is serving the ready application.'
