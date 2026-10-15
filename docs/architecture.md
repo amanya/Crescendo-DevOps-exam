@@ -7,21 +7,27 @@ Terraform manages the infrastructure in two directories. [`infra/`](../infra/) d
 ### Browser requests
 
 ```mermaid
-flowchart TD
-    Browser[Browser] -->|HTTPS| CF["CloudFront<br/>Default certificate, caching disabled"]
-    CF -->|HTTP 80| ALB
-    subgraph VPC["VPC 10.42.0.0/16 · eu-central-1"]
-        subgraph Public["Public subnets · zones a and b"]
-            ALB[Application Load Balancer]
+---
+config:
+  flowchart:
+    rankSpacing: 25
+    padding: 12
+---
+flowchart LR
+    Browser[Browser] -->|HTTPS| CF[CloudFront]
+    subgraph VPC[VPC]
+        subgraph Public[Public a + b]
+            ALB[ALB]
         end
-        subgraph PrivateA["Private subnet · zone a"]
-            subgraph EC2["One EC2 instance · Ubuntu · no public IP"]
-                Nginx["Nginx<br/>Port 80"] -->|HTTP 127.0.0.1:8080| CMS["Tomcat + Magnolia"]
-                CMS --- Disk["EBS root volume · 30 GiB gp3<br/>OS, software, CMS data"]
+        subgraph PrivateA[Private subnet a]
+            subgraph EC2[EC2 instance]
+                Nginx[Nginx] -->|8080| CMS["Tomcat +<br/>Magnolia"]
+                CMS --- Disk["EBS root<br/>30 GiB gp3"]
             end
         end
         ALB -->|HTTP 80| Nginx
     end
+    CF -->|HTTP 80| ALB
 ```
 
 CloudFront receives the browser's HTTPS request and forwards it to the ALB over HTTP on port 80. The ALB sends the request to Nginx, also on port 80. Nginx then forwards it to Tomcat on the same instance at `127.0.0.1:8080`. Tomcat accepts connections only from within that instance.
@@ -111,6 +117,6 @@ This CI design trusts repository administrators and authors of eligible pull req
 
 The application has one instance in zone `a`, so maintenance, replacement, or instance failure interrupts service. Having an ALB in two zones does not provide a second application host.
 
-Both private subnets depend on the NAT Gateway in zone a. A NAT or zone outage removes outbound internet and Systems Manager access, and outbound traffic from the private subnet in zone b must cross zones. There is no automatic instance or NAT failover.
+Both private subnets depend on the NAT Gateway in Bzone a. A NAT or zone outage removes outbound internet and Systems Manager access, and outbound traffic from the private subnet in zone b must cross zones. There is no automatic instance or NAT failover.
 
 See [setup and operations](operations.md) for deployment and recovery, and [walkthrough evidence](submission.md) for the verified reboot, replacement, browser, and CI behavior.
