@@ -130,7 +130,7 @@ resource "aws_iam_role_policy" "plan" {
         Effect = "Allow"
         Action = [
           "ec2:DescribeAddresses", "ec2:DescribeAddressesAttribute", "ec2:DescribeImages", "ec2:DescribeInstances",
-          "ec2:DescribeInstanceAttribute", "ec2:DescribeInstanceCreditSpecifications",
+          "ec2:DescribeInstanceAttribute", "ec2:DescribeInstanceCreditSpecifications", "ec2:DescribeInstanceTypes",
           "ec2:DescribeInternetGateways", "ec2:DescribeManagedPrefixLists",
           "ec2:DescribeNatGateways", "ec2:DescribeRouteTables",
           "ec2:DescribeSecurityGroups", "ec2:DescribeSecurityGroupRules",
