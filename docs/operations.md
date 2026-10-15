@@ -58,7 +58,7 @@ python3 scripts/check-cloudfront.py "$(terraform -chdir=infra output -raw cloudf
 
 The checker runs without signing in and verifies readiness, redirects, caching, login-page assets, and cookie attributes through CloudFront. It needs only Python 3 and the public URL. Readiness must return HTTP 200. The login page returns HTTP 401 before authentication by design.
 
-Open the `author_url` Terraform output in a browser to use Magnolia. Always use the CloudFront HTTPS address. See the [README](../README.md#how-to-run) for login instructions and [recorded test results](submission.md#lifecycle-evidence) for the reboot and replacement checks.
+Open the `author_url` Terraform output in a browser to use Magnolia. Always use the CloudFront HTTPS address. See the [README](../README.md#how-to-run) for login instructions and [verification summary](../README.md#demo-and-verification) for the reboot and replacement checks.
 
 ## Lifecycle and troubleshooting
 

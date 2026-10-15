@@ -50,8 +50,19 @@ This is a development environment with one instance. Content survives instance r
 
 Browser traffic uses HTTPS. Connections from CloudFront to the load balancer and from the load balancer to the instance use HTTP. One NAT Gateway serves both zones. This is an author-only demo with embedded storage and no separate public publishing instance. AWS charges continue while the stack is running; see [teardown](docs/operations.md#teardown).
 
+## Demo and verification
+
+Magnolia AdminCentral and the Travel demo, accessed through the [CloudFront URL](https://d2xpkbus8fu2t7.cloudfront.net/magnoliaAuthor/) after instance replacement:
+
+![Magnolia AdminCentral through CloudFront](docs/evidence/admincentral.jpg)
+
+![Magnolia Travel demo through CloudFront](docs/evidence/travel.jpg)
+
+Verified on 2026-10-15: CMS content survived reboot. Instance replacement deleted the old root volume and automatically installed a fresh demo through the same CloudFront URL. Readiness returned HTTP 200 and the load balancer target was healthy. Only the instance and its target attachment changed resource identities; final infrastructure and backend plans reported no changes.
+
+The [verified pull-request run](https://github.com/amanya/Crescendo-DevOps-exam/actions/runs/38741770941) passed Terraform formatting, validation, and planning. The environment remains running for a live walkthrough.
+
 ## Documentation
 
 - [Architecture](docs/architecture.md): components, network boundaries, application provisioning, and CI design.
 - [Operations](docs/operations.md): deployment, checks, troubleshooting, state recovery, and teardown.
-- [Walkthrough and evidence](docs/submission.md): verified behavior and screenshots.

@@ -119,4 +119,4 @@ The application has one instance in zone `a`, so maintenance, replacement, or in
 
 Both private subnets depend on the NAT Gateway in Bzone a. A NAT or zone outage removes outbound internet and Systems Manager access, and outbound traffic from the private subnet in zone b must cross zones. There is no automatic instance or NAT failover.
 
-See [setup and operations](operations.md) for deployment and recovery, and [walkthrough evidence](submission.md) for the verified reboot, replacement, browser, and CI behavior.
+See [setup and operations](operations.md) for deployment and recovery, and [demo and verification](../README.md#demo-and-verification) for the verified reboot, replacement, browser, and CI behavior.
