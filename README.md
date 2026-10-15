@@ -4,7 +4,7 @@ Deploy Magnolia Community Edition on AWS with Terraform for the Crescendo DevOps
 
 ## Current status
 
-P01 through P05 are Verified. CloudFront serves Magnolia at the HTTPS URL below in account `317399646022`, region `eu-central-1`. On 2026-10-15, authenticated browser and HTTP checks passed for login, CSRF protection, AdminCentral, Travel content/assets, session reuse, anonymous isolation, and logout. The ALB target is healthy, CloudFront is Deployed, and the final Terraform plan reports no changes. P06 is Ready; P07 waits for P06. The P05 instance replacement intentionally started a fresh CMS.
+P01 through P05 are Verified. CloudFront serves Magnolia at the HTTPS URL below in account `317399646022`, region `eu-central-1`. On 2026-10-15, authenticated browser and HTTP checks passed for login, CSRF protection, AdminCentral, Travel content/assets, session reuse, anonymous isolation, and logout. The ALB target is healthy, CloudFront is Deployed, and the final Terraform plan reports no changes. P06 is In progress: workload state is in S3 and the validation PR is open; actual CI verification remains pending. P07 waits for P06. The P05 instance replacement intentionally started a fresh CMS.
 
 The infrastructure uses two public and two private subnets across two availability zones, one NAT Gateway, and one private EC2 instance. The OS, software, and CMS data share one EBS root volume, deleted on termination. Instance replacement reinstalls the application and starts a fresh CMS. EBS encryption follows the AWS account and AMI defaults.
 
@@ -18,7 +18,7 @@ See [the plan](docs/plan.md) for scope, acceptance criteria, validation evidence
 - Network access to the [Terraform Registry](https://registry.terraform.io/providers/hashicorp/aws) and HashiCorp's provider downloads during initialization.
 - Python 3 for the local provisioning checker. ShellCheck is optional; the checker runs it when available.
 
-GitHub CLI 2.95.0 is also installed locally; it is optional for P01. AWS credentials are not needed for `terraform init`, `terraform fmt`, or `terraform validate`. Planning and deployment require a working `default` profile and suitable AWS permissions. Keep credential material outside the repository in your normal AWS configuration.
+GitHub CLI 2.95.0 is installed locally. Formatting and validation need no AWS credentials when initialization uses `-backend=false` in a fresh Terraform data directory. Normal initialization, planning, and deployment access the S3 backend and need AWS authentication. Use the local `default` profile and keep credential material in your normal AWS configuration, outside this repository.
 
 ## Local setup
 
@@ -35,12 +35,12 @@ The verified local version is Terraform 1.16.6 for macOS arm64. HashiCorp's offi
 From the repository root, initialize and check the configuration:
 
 ```sh
-terraform -chdir=infra init -input=false
+AWS_PROFILE=default terraform -chdir=infra init -input=false -lockfile=readonly
 terraform -chdir=infra fmt -check -recursive
 terraform -chdir=infra validate
 ```
 
-Initialization downloads the provider and uses Terraform's default local backend. It does not create AWS resources. Remote state belongs to P06. Commit the provider lock file whenever an intentional dependency update changes it; follow the [HashiCorp lock-file guidance](https://developer.hashicorp.com/terraform/language/files/dependency-lock).
+Initialization downloads the pinned provider and connects to the existing S3 backend. It does not create AWS resources. On a new account, create the backend with `bootstrap/` first; see the state instructions below. Commit both provider lock files after an intentional dependency update; follow the [HashiCorp lock-file guidance](https://developer.hashicorp.com/terraform/language/files/dependency-lock).
 
 The `.gitignore` excludes local state, plans, provider downloads, variable files, environment files, credentials, and generated application artifacts. It keeps `.terraform.lock.hcl` tracked. Review files before committing them; ignore patterns cannot detect every sensitive value.
 
@@ -51,7 +51,12 @@ AGENTS.md                   Project instructions
 README.md                   Purpose, prerequisites, and local setup
 docs/plan.md                Scope, task status, and validation evidence
 infra/versions.tf           Terraform and AWS provider constraints
-infra/providers.tf          AWS profile, region, account guard, and default tags
+infra/providers.tf          AWS credential chain, region, account guard, and tags
+infra/backend.tf            S3 workload state and native locking
+bootstrap/main.tf           Separate state bucket and GitHub OIDC identity
+bootstrap/.terraform.lock.hcl  Bootstrap provider selection and checksums
+.github/workflows/terraform.yml       PR formatting, validation, and plan caller
+.github/workflows/terraform-plan.yml  Trusted reusable plan workflow on main
 infra/variables.tf          Reviewed Ubuntu AMI release input
 infra/network.tf            VPC, subnets, Internet Gateway, NAT, and routing
 infra/compute.tf            AMI, instance role/profile, security group, and EC2
@@ -69,7 +74,7 @@ scripts/check-cloudfront-browser.py  On-instance headless browser acceptance che
 
 ## Infrastructure and sizing
 
-Terraform uses profile `default` in `eu-central-1` and refuses accounts other than `317399646022`. Resources carry `Project=crescendo-devops-exam` and `ManagedBy=Terraform` tags where supported. The configuration uses a local backend until P06.
+Local operators select profile `default` through `AWS_PROFILE=default`. Terraform uses the standard AWS credential chain in `eu-central-1` and refuses accounts other than `317399646022`. Resources carry `Project=crescendo-devops-exam` and `ManagedBy=Terraform` tags where supported. The workload uses versioned S3 state with native locking; the bootstrap has separate local state and a private S3 recovery copy.
 
 | Component | Configuration |
 | --- | --- |
@@ -97,7 +102,7 @@ EC2 explicitly depends on both default routes, all public/private route-table as
 
 The checked configuration requires no variable file. Planning needs STS identity access, EC2 image/managed-prefix-list lookup permissions, and CloudFront managed-policy read permissions. The deployer must also be able to create, read, tag, update, and delete the planned EC2/VPC, Elastic IP/NAT, ELBv2, IAM, and CloudFront distribution/request-policy resources, attach the SSM managed policy, and pass the instance role to EC2. Elastic Load Balancing may need permission to create its service-linked role if it is absent. A successful plan does not verify these write permissions or available quotas/capacity.
 
-Before a new deployment, confirm capacity and quotas for a VPC, four subnets, one NAT Gateway/Elastic IP, an ALB/target group, and a 2-vCPU on-demand instance. Keep the chosen AMI available, the Ubuntu repositories and `nexus.magnolia-cms.com` reachable, and CloudFront origin-facing TCP 80 reachable at the ALB. CloudFront uses its default hostname and certificate, so no customer certificate or domain is required. There is no application secret input, remote backend, or GitHub setup in this stage.
+Before a new deployment, confirm capacity and quotas for a VPC, four subnets, one NAT Gateway/Elastic IP, an ALB/target group, and a 2-vCPU on-demand instance. Keep the chosen AMI available, the Ubuntu repositories and `nexus.magnolia-cms.com` reachable, and CloudFront origin-facing TCP 80 reachable at the ALB. CloudFront uses its default hostname and certificate, so no customer certificate or domain is required. There is no application secret input. The backend and GitHub planning role are managed separately in `bootstrap/`.
 
 To prepare a fresh plan, run from the repository root:
 
@@ -106,7 +111,7 @@ mkdir -p build/p05
 terraform -chdir=infra fmt -check -recursive
 terraform -chdir=infra validate
 python3 scripts/check-provisioning.py
-terraform -chdir=infra plan -input=false -out=../build/p05/deploy.tfplan
+AWS_PROFILE=default terraform -chdir=infra plan -input=false -out=../build/p05/deploy.tfplan
 terraform -chdir=infra show ../build/p05/deploy.tfplan
 ```
 
@@ -243,4 +248,105 @@ Magnolia logged an invalid-key-length fallback during first-run key generation; 
 
 This is a single author demo with embedded persistence and one root disk. It has no content backup, application high availability, or independent public publishing target. Java and Nginx package patch versions depend on the repositories at installation time; only Magnolia and bundled Tomcat are pinned here. The archive checksum was calculated from the official HTTPS download, rather than verified against a separate vendor signature. P04 confirmed initial login and initialized sample content. P07 must demonstrate retention of newly created content after reboot and fresh initialization after instance replacement.
 
-One instance means maintenance, replacement, or a failure interrupts the application. The ALB spans two zones, but the second private subnet has no standby instance. One NAT Gateway in zone `a` serves both private subnets; a NAT or zone outage removes their internet and Systems Manager access, and traffic from zone `b` crosses zones. There is no NAT failover. EC2, EBS, NAT processing, ALB, and public IPv4 addresses incur charges after deployment. The stack remains running and billable. CloudFront adds request and transfer charges; remote state, CI, and publication remain later tasks. When teardown is authorized, review `terraform -chdir=infra plan -destroy` and run `terraform -chdir=infra destroy` against the preserved state. Termination deletes the CMS data with the root disk.
+One instance means maintenance, replacement, or a failure interrupts the application. The ALB spans two zones, but the second private subnet has no standby instance. One NAT Gateway in zone `a` serves both private subnets; a NAT or zone outage removes their internet and Systems Manager access, and traffic from zone `b` crosses zones. There is no NAT failover. EC2, EBS, NAT processing, ALB, and public IPv4 addresses incur charges after deployment. The stack remains running and billable. CloudFront adds request and transfer charges. S3 charges for state versions, recovery copies, and requests; versions are retained until an operator removes them. See the teardown order below. Termination deletes the CMS data with the root disk.
+
+
+## Remote state and bootstrap
+
+The public source repository is [amanya/Crescendo-DevOps-exam](https://github.com/amanya/Crescendo-DevOps-exam). GitHub reports `amanya` as a personal account; the repository uses the requested owner/path.
+
+| Item | Value |
+| --- | --- |
+| State bucket | `crescendo-exam-tfstate-317399646022-eu-central-1` |
+| Workload key | `workload/terraform.tfstate` |
+| Native lock key | `workload/terraform.tfstate.tflock` |
+| Bootstrap recovery key | `bootstrap/terraform.tfstate` |
+| Region / account | `eu-central-1` / `317399646022` |
+| CI role | `arn:aws:iam::317399646022:role/crescendo-exam-github-plan` |
+| OIDC provider | `arn:aws:iam::317399646022:oidc-provider/token.actions.githubusercontent.com` |
+
+`bootstrap/` is an independent Terraform root with local state. It creates the bucket, versioning, bucket-owner-enforced ownership, all four public-access blocks, a TLS-only bucket policy, and the OIDC provider/role/policy. Inspection found no GitHub OIDC provider in this account, so this configuration created it. In an account with an existing provider, inspect its audience configuration and import it into the bootstrap before applying; do not create a duplicate or remove a shared provider during teardown.
+
+The bucket uses AWS's normal SSE-S3 encryption defaults, verified as `AES256`. There is no custom key, encryption override, DynamoDB table, or content backup. `prevent_destroy` and `force_destroy = false` protect against accidental bucket deletion. Versioning retains old state and lock versions, including delete markers; it does not prevent a privileged operator from deleting versions. Access logging, CloudTrail S3 data events, and CloudWatch request monitoring are recommended for a longer-lived environment but are outside this exam's agreed scope and would add configuration and charges.
+
+To bootstrap a new environment after reviewing names, account, repository IDs, and trust:
+
+```sh
+umask 077
+mkdir -p build/p06/backups
+chmod 700 build/p06 build/p06/backups
+AWS_PROFILE=default terraform -chdir=bootstrap init -input=false -lockfile=readonly
+terraform -chdir=bootstrap fmt -check
+terraform -chdir=bootstrap validate
+AWS_PROFILE=default terraform -chdir=bootstrap plan -out=../build/p06/bootstrap.tfplan
+AWS_PROFILE=default terraform -chdir=bootstrap apply ../build/p06/bootstrap.tfplan
+chmod 600 bootstrap/terraform.tfstate
+```
+
+Preserve `bootstrap/terraform.tfstate` after every bootstrap apply in restricted local storage and at `s3://crescendo-exam-tfstate-317399646022-eu-central-1/bootstrap/terraform.tfstate`. P06 uploaded a recovery snapshot through an AWS MCP presigned upload and verified it by downloading to restricted storage and comparing its checksum. An authenticated operator can also use `AWS_PROFILE=default aws s3 cp bootstrap/terraform.tfstate s3://crescendo-exam-tfstate-317399646022-eu-central-1/bootstrap/terraform.tfstate --region eu-central-1 --only-show-errors`. The recovery copy is versioned and unavailable to CI. Keep a separate restricted copy outside the checkout before deleting the checkout or bucket. The bootstrap's local backend avoids making the bucket depend on a backend it must create; serialize bootstrap changes manually.
+
+### Workload migration and identity checks
+
+P06 first copied the existing local workload state to ignored `build/p06/backups/workload-before.tfstate` with directory mode `0700` and file mode `0600`. It then added `infra/backend.tf` and used Terraform's [supported migration process](https://developer.hashicorp.com/terraform/cli/commands/init):
+
+```sh
+umask 077
+cp infra/terraform.tfstate build/p06/backups/workload-before.tfstate
+chmod 600 build/p06/backups/workload-before.tfstate
+AWS_PROFILE=default terraform -chdir=infra init -migrate-state -force-copy -input=false -lockfile=readonly
+AWS_PROFILE=default terraform -chdir=infra state pull > build/p06/workload-after.tfstate
+AWS_PROFILE=default terraform -chdir=infra plan -input=false -detailed-exitcode -out=../build/p06/verified-migration.tfplan
+```
+
+The migration copied every resource identity but assigned a new lineage and serial. Verification caught this before completion. With no concurrent writers, the agent preserved the migrated snapshot, compared every state field except snapshot metadata against the original backup, and used the documented [state recovery command](https://developer.hashicorp.com/terraform/cli/commands/state/push) to restore the original snapshot. The explicit `-force` was limited to that checked recovery; do not use it as a routine migration command. The final state retains the original lineage and all 33 managed resource IDs, including EC2 `i-03e2b17589905593d` and CloudFront `E178D8X4DHIIP9`. Its serial advanced from 41 to 42 during recovery. The fresh remote-state plan exited 0 with no changes. No workload apply, replacement, reboot, or CMS reset occurred.
+
+For any future migration, compare lineage and all managed resource addresses/indexes/IDs before considering it complete. `init -reconfigure` alone does not migrate state. Keep the old snapshot until the remote-state identity checks and a fresh plan pass. Ignore rules exclude state, backups, `.terraform/` backend caches, native lock files, saved plans, logs, variable files, and generated output. Keep `umask 077` for state/plan operations and never publish their contents.
+
+### Local and CI authentication
+
+Neither AWS provider configuration nor the S3 backend hardcodes a profile. Locally, use `AWS_PROFILE=default`; CI receives temporary environment credentials from GitHub OIDC. Do not set `AWS_PROFILE` in GitHub Actions or upload local AWS configuration. The account guard and region remain fixed. No long-lived AWS access key was added to GitHub.
+
+The repository's initial OIDC settings reported immutable subjects enabled and default prefix `repo:amanya@4490611/Crescendo-DevOps-exam@1420637563`. Following [GitHub's OIDC subject documentation](https://docs.github.com/en/actions/reference/security/oidc), P06 configured `use_default=false` with `include_claim_keys=["repository_id", "repository_owner_id", "context", "job_workflow_ref"]`. The intended subject is:
+
+```text
+repository_id:1420637563:repository_owner_id:4490611:pull_request:job_workflow_ref:amanya/Crescendo-DevOps-exam/.github/workflows/terraform-plan.yml@refs/heads/main
+```
+
+The actual PR workflow checks and prints only the subject, audience, and reusable-workflow reference, never the token. IAM requires an exact subject match and audience `sts.amazonaws.com`. The identity provider URL is `https://token.actions.githubusercontent.com`. Changing repository ownership, OIDC customization, or the trusted workflow reference requires a deliberate trust-policy review. GitHub's [reusable workflow OIDC guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-with-reusable-workflows) explains the workflow binding.
+
+Set these nonsecret repository variables under Settings -> Secrets and variables -> Actions -> Variables. They were configured for P06:
+
+| Variable | Purpose |
+| --- | --- |
+| `AWS_PLAN_ROLE_ARN` | Planning role ARN above |
+| `TF_STATE_LINEAGE` | Original workload lineage; compare with a restricted state pull |
+| `TF_STATE_IDENTITIES_SHA256` | SHA-256 of the canonical managed-resource identity list below |
+
+The canonical list contains `[module-or-empty-string, resource-type, resource-name, index-key-or-null, id]` for each managed instance in raw state. Sort rows by Python `json.dumps(row)` and hash UTF-8 `json.dumps(rows, separators=(',', ':'))`. The workflow implements this algorithm before planning and fails if lineage or identities differ. After an authorized manual deployment changes resource identities, verify the new state locally and update the identity variable before expecting subsequent PR plans to pass. Never copy whole state into a repository variable.
+
+### PR checks and trust boundaries
+
+`.github/workflows/terraform.yml` runs on `pull_request` to `main`. Every PR runs `terraform fmt -check -recursive` and initializes/validates both Terraform roots with `-backend=false`, fresh temporary data directories, and no AWS credentials. Actions are pinned to commit SHAs; Terraform is pinned to 1.16.6 and provider selections use committed lock files.
+
+A same-repository PR, targeting `main` and initiated by a non-Dependabot actor, can call `.github/workflows/terraform-plan.yml@main`. That reusable workflow repeats the trust gate before obtaining an OIDC token or checking out code. IAM binds the token to this workflow on `main`, so a modified PR caller cannot bypass the gate with another credential-bearing job. Fork PRs run only formatting/validation. There is no `pull_request_target` workflow. Repository administrators and users who can change the trusted workflow on `main` remain part of the trust boundary; same-repository PR authors are trusted to run Terraform code with the planning role. Review workflow and provider changes carefully.
+
+The plan role has explicit EC2, ELB, IAM, and CloudFront reads for the existing workload. Regional reads are constrained to `eu-central-1`; IAM role/profile reads target the workload identity. Some describe/list APIs require `Resource = "*"`. S3 grants `ListBucket` for Terraform's workload/workspace discovery prefixes, `GetObject` only for the workload state, and `GetObject`/`PutObject`/`DeleteObject` only for the exact `.tflock` key, following [HashiCorp's S3 backend permissions](https://developer.hashicorp.com/terraform/language/backend/s3). The role cannot write/delete workload state, read bootstrap state, deploy resources, pass roles, or use Systems Manager. Deployment is a reviewed manual operator action.
+
+Planning is serialized in GitHub and uses S3 native locking with a five-minute wait. Terraform exit 0 means no changes; exit 2 means a successful plan with changes; every other exit fails the job. The job checks migrated-state identity first and exposes only action counts and success/failure. State, saved plans, JSON plans, and full diagnostics remain in a restricted temporary runner directory removed on exit. No plan artifact, full plan comment, or full plan log is published. On a plan failure, only missing API action names may appear publicly; investigate other failures in an authorized private session.
+
+P06's validation PR is [PR #1](https://github.com/amanya/Crescendo-DevOps-exam/pull/1). CI verification and the final run link remain pending. Leave the PR open for review. Collaborator invitations and final submission remain P07 work.
+
+### Recovery and teardown order
+
+For workload-state recovery, stop CI/manual writers first and preserve the current S3 version and a restricted local state pull. Retrieve the chosen prior version into a mode-`0600` file without printing it, then compare lineage, serial, identities, and the live resources. Use Terraform's state recovery commands only after reviewing those differences; do not blindly overwrite a newer state. Recovering state does not restore CMS content. A stale lock can be removed with `terraform -chdir=infra force-unlock LOCK_ID` only after confirming its writer has stopped; never disable locking to work around an active writer.
+
+For bootstrap recovery, retrieve `bootstrap/terraform.tfstate` from its versioned S3 key into the `bootstrap/` directory under `umask 077`, or restore the independent restricted backup. Run bootstrap `init`, `validate`, and `plan` with the local default profile. Verify the eight existing resources are recognized and the plan is empty before another apply. If both state copies are lost, import each existing bucket configuration, OIDC provider, role, and inline policy using provider-documented import IDs; do not apply a creation plan over existing resources. Keep the bucket name, account, region, and bootstrap source available outside the state archive.
+
+When teardown is separately authorized:
+
+1. Disable PR planning and stop all Terraform writers. Preserve both state snapshots and any needed CMS content outside the resources being removed.
+2. With the local default profile, review `terraform -chdir=infra plan -destroy`, then destroy the workload while the S3 backend and locking remain available. EC2 termination deletes CMS data with its root disk.
+3. Preserve the final workload state and bootstrap state outside the bucket. Remove the CI role/policy; remove the OIDC provider only if it is still unused by other roles.
+4. Review a bootstrap teardown that deliberately removes bucket `prevent_destroy`. Remove all object versions and delete markers only after retaining the recovery copies. The bucket's `force_destroy = false` will otherwise block deletion of a nonempty bucket. Destroy the remaining bootstrap resources last.
+
+No teardown or collaborator invitation was performed during P06.
