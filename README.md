@@ -4,11 +4,46 @@ Deploy Magnolia Community Edition on AWS with Terraform for the Crescendo DevOps
 
 ## Current status
 
-P01 through P06 are Verified. CloudFront serves Magnolia at the HTTPS URL below in account `317399646022`, region `eu-central-1`. On 2026-10-15, authenticated browser and HTTP checks passed for login, CSRF protection, AdminCentral, Travel content/assets, session reuse, anonymous isolation, and logout. The ALB target is healthy, CloudFront is Deployed, and the final Terraform plan reports no changes. P06 migration and actual PR checks passed against remote state. P07 is Ready; the P06 PR remains open for review. The P05 instance replacement intentionally started a fresh CMS.
+P01 through P06 passed independent review, and PR #1 was merged into `main` as `89520bd`. P07 lifecycle, authenticated HTTP, and browser checks passed; the new PR is being prepared for review. Reboot retained the test page and its identifier; replacement initialized a fresh CMS at the same CloudFront URL. Both Terraform roots finish with no changes. The stack remains running in account `317399646022`, region `eu-central-1`. Submission will use a private repository unless the user authorizes a different decision; the exam requests a public repository. See [submission and walkthrough notes](docs/submission.md) for evidence and outstanding access requirements.
 
 The infrastructure uses two public and two private subnets across two availability zones, one NAT Gateway, and one private EC2 instance. The OS, software, and CMS data share one EBS root volume, deleted on termination. Instance replacement reinstalls the application and starts a fresh CMS. EBS encryption follows the AWS account and AMI defaults.
 
 See [the plan](docs/plan.md) for scope, acceptance criteria, validation evidence, and the complete P02/P03 interface.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    Browser[Browser] -->|HTTPS, default certificate| CF[CloudFront: caching disabled]
+    CF -->|HTTP 80, origin-facing prefix list| ALB
+    subgraph VPC[eu-central-1 VPC 10.42.0.0/16]
+        subgraph Public[Public subnets in zones a and b]
+            ALB[Application Load Balancer across both zones]
+            NAT[NAT Gateway and EIP in zone a]
+            IGW[Internet Gateway]
+        end
+        subgraph PrivateA[Private subnet in zone a]
+            Nginx[Nginx on EC2: port 80]
+            CMS[Tomcat and Magnolia: loopback 8080]
+            Disk[One 30 GiB gp3 root: OS, software, CMS]
+            Nginx --> CMS
+            CMS --- Disk
+        end
+        PrivateB[Private subnet in zone b: no instance]
+        ALB -->|HTTP 80, ALB security group only| Nginx
+        Nginx -->|Outbound HTTP and HTTPS| NAT
+        PrivateB --> NAT
+        NAT --> IGW
+    end
+    IGW --> Downloads[Ubuntu, Magnolia downloads, SSM APIs]
+    Operator[Operator with default profile] -->|SSM via outbound agent| Nginx
+    Actions[Trusted GitHub PR workflow, OIDC] --> Role[Read-only AWS planning role]
+    Role --> State[Versioned private S3 workload state and native lock]
+    Terraform[Local Terraform deployment] --> State
+    Terraform --> VPC
+```
+
+The ALB spans two zones; the application and NAT each run in one zone. Reboot retains the root disk. Instance replacement deletes it and rebuilds Magnolia with a fresh repository. The bootstrap Terraform root owns the state bucket and CI identity separately from the workload.
 
 ## Prerequisites
 
@@ -48,7 +83,9 @@ The `.gitignore` excludes local state, plans, provider downloads, variable files
 
 ```text
 AGENTS.md                   Project instructions
-README.md                   Purpose, prerequisites, and local setup
+README.md                   Architecture, setup, and operations
+docs/submission.md          Walkthrough, evidence, and submission decisions
+docs/evidence/              Sanitized lifecycle results and screenshots
 docs/plan.md                Scope, task status, and validation evidence
 infra/versions.tf           Terraform and AWS provider constraints
 infra/providers.tf          AWS credential chain, region, account guard, and tags
@@ -70,6 +107,8 @@ scripts/check-runtime.py       Sanitized on-instance diagnostics
 scripts/check-private-login.py  SSM/loopback login, content, and session checks
 scripts/check-cloudfront.py     Sanitized public HTTPS and on-instance session checks
 scripts/check-cloudfront-browser.py  On-instance headless browser acceptance checks
+scripts/check-lifecycle.py      On-instance CMS create/retained/absent checks
+scripts/check-state-identities.py  Restricted before/after state identity comparison
 ```
 
 ## Infrastructure and sizing
@@ -107,24 +146,26 @@ Before a new deployment, confirm capacity and quotas for a VPC, four subnets, on
 To prepare a fresh plan, run from the repository root:
 
 ```sh
-mkdir -p build/p05
+umask 077
+mkdir -p build/operations
+chmod 700 build/operations
 terraform -chdir=infra fmt -check -recursive
 terraform -chdir=infra validate
 python3 scripts/check-provisioning.py
-AWS_PROFILE=default terraform -chdir=infra plan -input=false -out=../build/p05/deploy.tfplan
-terraform -chdir=infra show ../build/p05/deploy.tfplan
+AWS_PROFILE=default terraform -chdir=infra plan -input=false -out=../build/operations/deploy.tfplan
+terraform -chdir=infra show ../build/operations/deploy.tfplan
 ```
 
-P04 generated and inspected a fresh plan against the current account and local state, then applied the saved plan with 31 creations and no updates/deletions. It checked quotas and IAM permissions first. Before any later apply, review the root-volume lifecycle, routing and dependencies, security-group references, health settings, and rendered user data. P05 renders 9,858 bytes of user data, below EC2's 16 KiB limit; the Nginx template changes intentionally replace the instance. Generated plans, logs, rendered files, and state remain ignored; do not commit them.
+Before applying, review the root-volume lifecycle, routing and dependencies, security groups, health settings, and rendered user data. The current bootstrap renders 9,858 bytes, below EC2's 16 KiB raw limit. A user-data or AMI change can replace the instance and delete its CMS data. Keep the saved plan and detailed review in a private terminal or restricted file. Plans, logs, rendered files, and state remain ignored; do not commit them.
 
 After reviewing the saved plan, apply that exact file:
 
 ```sh
-terraform -chdir=infra apply ../build/p05/deploy.tfplan
+AWS_PROFILE=default terraform -chdir=infra apply ../build/operations/deploy.tfplan
 terraform -chdir=infra output
 ```
 
-Preserve `infra/terraform.tfstate` and its backup locally until P06 migrates them. Losing state does not remove the running resources. `alb_dns_name` identifies the CloudFront origin. The `cloudfront_distribution_id`, `cloudfront_url`, `author_url`, and `readiness_url` outputs identify the deployed distribution and public HTTPS endpoints. Terraform finishing an apply does not confirm cloud-init or application readiness.
+The workload already uses remote state; do not repeat migration. Preserve restricted snapshots before lifecycle or recovery operations. Losing state does not remove running resources. `alb_dns_name` identifies the CloudFront origin. The `cloudfront_distribution_id`, `cloudfront_url`, `author_url`, and `readiness_url` outputs identify the deployed distribution and public HTTPS endpoints. Terraform finishing an apply does not confirm cloud-init or application readiness.
 
 ## Running development stack
 
@@ -133,8 +174,8 @@ Preserve `infra/terraform.tfstate` and its backup locally until P06 migrates the
 | Author | [Magnolia login](https://d2xpkbus8fu2t7.cloudfront.net/magnoliaAuthor/) |
 | Readiness | [Magnolia readiness](https://d2xpkbus8fu2t7.cloudfront.net/magnoliaAuthor/.rest/health/ready), exact HTTP 200 when ready |
 | CloudFront | `E178D8X4DHIIP9`, [distribution console](https://us-east-1.console.aws.amazon.com/cloudfront/v4/home?region=us-east-1#/distributions/E178D8X4DHIIP9) |
-| Instance | `i-03e2b17589905593d`, private `10.42.10.237` |
-| Root volume | `vol-0507e0dd3d123a7d3`, 30 GiB gp3, deleted on termination; unencrypted under the current account/AMI defaults |
+| Instance | `i-025b0f60830e52130`, private `10.42.10.244` |
+| Root volume | `vol-05d3b44af9b7d13fa`, 30 GiB gp3, deleted on termination; unencrypted under the current account/AMI defaults |
 | VPC | `vpc-0dae6a3137091be57` |
 | NAT Gateway | `nat-083d0e0c9070b58d4`, EIP `18.195.185.6` |
 | ALB | `arn:aws:elasticloadbalancing:eu-central-1:317399646022:loadbalancer/app/crescendo-exam/5836054be05d28c9` |
@@ -145,7 +186,7 @@ The CloudFront author page returns HTTP 401 with Magnolia's login form until aut
 
 P04 used AWS MCP Systems Manager Run Command to run `scripts/check-runtime.py` on the instance as root. It prints service/package/health results and resource measurements, and summarizes log markers without returning arbitrary log lines. The private login helper, `scripts/check-private-login.py`, runs only against loopback Nginx. It reads the local password into memory, submits the CSRF-protected form, checks session rotation and authenticated content, then logs out. Run it only in an authorized private SSM context; never paste credentials, cookies, response HTML, or unsanitized logs into evidence. The user authorized this local-file workflow as a P04 exception to the Secrets Manager/`asm-exec` rule after the required secret skill was loaded. No Secrets Manager resource or additional IAM access was added.
 
-P04 private checks passed for administrator login, AdminCentral, the initialized Travel page and REST node, six referenced content assets, and 95 installed modules. Login rotated the session; subsequent requests reused it, and logout restored HTTP 401. The session cookie was HttpOnly with path `/magnoliaAuthor`; Secure was false over local HTTP. Credentials and session cookies were never sent over the public HTTP connection. After reboot, private checks confirmed the same repository/sample identifier and password file, then repeated login, content, assets, sessions, and logout successfully. P07 owns the full content-retention and replacement demonstration.
+P04 private checks passed for administrator login, AdminCentral, the initialized Travel page and REST node, six referenced content assets, and 95 installed modules. Login rotated the session; subsequent requests reused it, and logout restored HTTP 401. The session cookie was HttpOnly with path `/magnoliaAuthor`; Secure was false over local HTTP. Credentials and session cookies were never sent over the public HTTP connection. After reboot, private checks confirmed the same repository/sample identifier and password file, then repeated login, content, assets, sessions, and logout successfully. P07 records the newly created content and replacement results in [the lifecycle evidence](docs/evidence/p07-lifecycle.json).
 
 ## CloudFront and HTTPS
 
@@ -171,7 +212,31 @@ The on-instance headless Chromium check, `scripts/check-cloudfront-browser.py`, 
 
 The browser test permits network requests only to this stack's CloudFront HTTPS origin. It intentionally blocked optional Travel-demo assets at `fonts.googleapis.com`, `cdn.jsdelivr.net`, and `static.addtoany.com`; those third-party fonts/widgets were not verified. Local sample content and images rendered successfully. The checker fails on any unexpected destination, HTTP downgrade, or document navigation outside the approved origin. No tracing, video, HAR, persistent browser profile, or cookie-state export is enabled. Playwright/Chromium are temporary test tooling, not part of provisioning; an approved repeat run needs those tools on the instance.
 
-A [sanitized AdminCentral screenshot](docs/evidence/p05-admincentral.jpg) records the rendered app launcher after CloudFront HTTPS login. It contains no credentials, cookies, or tokens.
+The historical [P05 AdminCentral screenshot](docs/evidence/p05-admincentral.jpg) records the rendered app launcher after CloudFront HTTPS login. Current replacement evidence and screenshots are linked from [the submission notes](docs/submission.md).
+
+## Lifecycle operations
+
+A reboot retains CMS data. An instance replacement deletes it. For a repeat test, choose a new test-node name in `scripts/check-lifecycle.py`; the helper refuses to overwrite an existing node. Run the helper and `scripts/check-cloudfront.py` together in a restricted directory on EC2 through AWS MCP Systems Manager `SendCommand` with `AWS-RunShellScript`. Use the exact Terraform `cloudfront_url` after verifying the distribution's live hostname and origin. Run as root; never read the password file into tool output. The helper's `create` result contains only the test content, JCR identifier, and boot ID. Supply those public identifiers to `retained` after reboot and to `absent` after replacement. Wait for readiness and target health before each phase. `scripts/check-runtime.py` summarizes local provisioning and services without printing raw logs.
+
+For the approved development replacement, keep all Terraform material restricted:
+
+```sh
+umask 077
+mkdir -p build/lifecycle
+chmod 700 build/lifecycle
+AWS_PROFILE=default terraform -chdir=infra state pull > build/lifecycle/before.tfstate
+AWS_PROFILE=default terraform -chdir=infra plan -input=false -lock-timeout=5m \
+  -replace=aws_instance.magnolia -out=../build/lifecycle/replace.tfplan
+terraform -chdir=infra show ../build/lifecycle/replace.tfplan
+# Continue only after inspecting exactly the instance and target attachment replacements.
+AWS_PROFILE=default terraform -chdir=infra apply ../build/lifecycle/replace.tfplan
+AWS_PROFILE=default terraform -chdir=infra state pull > build/lifecycle/after.tfstate
+python3 scripts/check-state-identities.py build/lifecycle/before.tfstate build/lifecycle/after.tfstate
+```
+
+Inspect saved-plan output privately. Confirm the original lineage, the complete managed address set, and exactly the intended two identity changes. Verify the old root volume is gone with EC2 `DescribeVolumes`; `InvalidVolume.NotFound` is the expected result. Verify automatic provisioning, fresh sample content, absence of the test node, healthy new target, and the same public URL. The root volume changes within the instance resource. Keep AWS/AMI encryption defaults and standard credits. Update the nonsecret GitHub variable `TF_STATE_IDENTITIES_SHA256` with the comparison helper's digest only after the intended identity changes pass verification, then run fresh workload/bootstrap plans and inspect actual PR checks.
+
+Application startup can take several minutes, especially on standard CPU credits. SSM Online and a successful Terraform apply do not mean Magnolia is ready. During startup, CloudFront can return 502/503/504 and the ALB target can be unhealthy. Check cloud-init completion, Magnolia/Nginx service states, local readiness, then public readiness and target health. The deployed unit allows 1,500 seconds for startup; its readiness helper makes 120 attempts with five-second pauses and bounded requests. Diagnose a timeout with sanitized summaries before changing sizing or provisioning.
 
 ## Application installation
 
@@ -199,7 +264,7 @@ The [Magnolia configuration reference](https://docs.magnolia-cms.com/product-doc
 | `/var/log/magnolia` | Magnolia logs |
 | `/opt/magnolia/logs`, `/opt/magnolia/work`, `/opt/magnolia/temp` | Tomcat logs and working files |
 
-The selected archive uses `jackrabbit-bundle-h2-search.xml`, H2 2.4.240, and Jackrabbit 2.22.8-magnolia. There is no external database or separate mount. Services reuse these directories on reboot. The bootstrap preserves an existing matching installation and data if rerun; a checksum marker rejects an unexpected installed bundle. A new instance downloads the package again and initializes a fresh repository and administrator account. Terraform sets root-volume deletion on termination and leaves EBS encryption at AWS/AMI defaults. P04 verified reboot reuse; P07 owns the full content-retention and instance-replacement demonstration.
+The selected archive uses `jackrabbit-bundle-h2-search.xml`, H2 2.4.240, and Jackrabbit 2.22.8-magnolia. There is no external database or separate mount. Services reuse these directories on reboot. The bootstrap preserves an existing matching installation and data if rerun; a checksum marker rejects an unexpected installed bundle. A new instance downloads the package again and initializes a fresh repository and administrator account. Terraform sets root-volume deletion on termination and leaves EBS encryption at AWS/AMI defaults. P07 verifies newly created content across reboot and intentional content loss across replacement; see [the lifecycle evidence](docs/evidence/p07-lifecycle.json).
 
 ## Provisioning integration
 
@@ -246,7 +311,7 @@ Runtime diagnostics use `/var/log/cloud-init-output.log`, `/var/log/magnolia-boo
 
 Magnolia logged an invalid-key-length fallback during first-run key generation; its exact-version source confirms it uses the bundled default afterward. Initialization, all readiness checks, and private login passed. Standard CPU credits can make startup slow; allow the configured readiness window before diagnosing a failure. An HTTP 401 on an author page is its login form, not a failed health check. Stopping Tomcat makes Nginx return 502; ALB health changes only after its configured thresholds, and a sole unhealthy target can still receive requests.
 
-This is a single author demo with embedded persistence and one root disk. It has no content backup, application high availability, or independent public publishing target. Java and Nginx package patch versions depend on the repositories at installation time; only Magnolia and bundled Tomcat are pinned here. The archive checksum was calculated from the official HTTPS download, rather than verified against a separate vendor signature. P04 confirmed initial login and initialized sample content. P07 must demonstrate retention of newly created content after reboot and fresh initialization after instance replacement.
+This is a single author demo with embedded persistence and one root disk. It has no content backup, application high availability, or independent public publishing target. Java and Nginx package patch versions depend on the repositories at installation time; only Magnolia and bundled Tomcat are pinned here. The archive checksum was calculated from the official HTTPS download, rather than verified against a separate vendor signature. P04 confirmed initial login and sample content. P07 records reboot retention and replacement initialization in [the lifecycle evidence](docs/evidence/p07-lifecycle.json).
 
 One instance means maintenance, replacement, or a failure interrupts the application. The ALB spans two zones, but the second private subnet has no standby instance. One NAT Gateway in zone `a` serves both private subnets; a NAT or zone outage removes their internet and Systems Manager access, and traffic from zone `b` crosses zones. There is no NAT failover. EC2, EBS, NAT processing, ALB, and public IPv4 addresses incur charges after deployment. The stack remains running and billable. CloudFront adds request and transfer charges. S3 charges for state versions, recovery copies, and requests; versions are retained until an operator removes them. See the teardown order below. Termination deletes the CMS data with the root disk.
 
@@ -285,22 +350,13 @@ chmod 600 bootstrap/terraform.tfstate
 
 Preserve `bootstrap/terraform.tfstate` after every bootstrap apply in restricted local storage and at `s3://crescendo-exam-tfstate-317399646022-eu-central-1/bootstrap/terraform.tfstate`. P06 uploaded a recovery snapshot through an AWS MCP presigned upload and verified it by downloading to restricted storage and comparing it byte for byte. An authenticated operator can also use `AWS_PROFILE=default aws s3 cp bootstrap/terraform.tfstate s3://crescendo-exam-tfstate-317399646022-eu-central-1/bootstrap/terraform.tfstate --region eu-central-1 --only-show-errors`. The recovery copy is versioned and unavailable to CI. Keep a separate restricted copy outside the checkout before deleting the checkout or bucket. The bootstrap's local backend avoids making the bucket depend on a backend it must create; serialize bootstrap changes manually.
 
-### Workload migration and identity checks
+### State identity checks
 
-P06 first copied the existing local workload state to ignored `build/p06/backups/workload-before.tfstate` with directory mode `0700` and file mode `0600`. It then added `infra/backend.tf` and used Terraform's [supported migration process](https://developer.hashicorp.com/terraform/cli/commands/init):
+The workload already uses the versioned S3 backend and native locking. P06 preserved the original lineage and all 33 managed identities; its reviewed migration/recovery history is in [the plan](docs/plan.md). Do not rerun migration or push an older local snapshot over the active backend. The P07 replacement preserves that lineage and changes only the instance and dependent target-attachment IDs.
 
-```sh
-umask 077
-cp infra/terraform.tfstate build/p06/backups/workload-before.tfstate
-chmod 600 build/p06/backups/workload-before.tfstate
-AWS_PROFILE=default terraform -chdir=infra init -migrate-state -force-copy -input=false -lockfile=readonly
-AWS_PROFILE=default terraform -chdir=infra state pull > build/p06/workload-after.tfstate
-AWS_PROFILE=default terraform -chdir=infra plan -input=false -detailed-exitcode -out=../build/p06/verified-migration.tfplan
-```
+Before a lifecycle operation, save a restricted `terraform -chdir=infra state pull` snapshot. Compare the complete managed address/index/ID set afterward. The lifecycle procedure above uses `scripts/check-state-identities.py` to require unchanged lineage and address set, an advanced serial, and exactly the two intended replacement identities. It emits only IDs, counts, serials, and the canonical digest. Use that verified digest to update `TF_STATE_IDENTITIES_SHA256` before expecting PR plans to pass.
 
-The migration copied every resource identity but assigned a new lineage and serial. Verification caught this before completion. With no concurrent writers, the agent preserved the migrated snapshot, compared every state field except snapshot metadata against the original backup, and used the documented [state recovery command](https://developer.hashicorp.com/terraform/cli/commands/state/push) to restore the original snapshot. The explicit `-force` was limited to that checked recovery; do not use it as a routine migration command. The final state retains the original lineage and all 33 managed resource IDs, including EC2 `i-03e2b17589905593d` and CloudFront `E178D8X4DHIIP9`. Its serial advanced from 41 to 42 during recovery. The fresh remote-state plan exited 0 with no changes. No workload apply, replacement, reboot, or CMS reset occurred.
-
-For any future migration, compare lineage and all managed resource addresses/indexes/IDs before considering it complete. `init -reconfigure` alone does not migrate state. Keep the old snapshot until the remote-state identity checks and a fresh plan pass. Ignore rules exclude state, backups, `.terraform/` backend caches, native lock files, saved plans, logs, variable files, and generated output. Keep `umask 077` for state/plan operations and never publish their contents.
+Ignore rules exclude state, backups, `.terraform/` backend caches, native lock files, saved plans, logs, variable files, and generated output. Keep directories mode `0700`, files mode `0600`, and `umask 077` for state/plan operations. Never publish state contents or full plan diagnostics. The ignored historical `infra/terraform.tfstate` and backup are stale recovery material, not the current backend; preserve them privately or remove them only after confirming recovery copies.
 
 ### Local and CI authentication
 
@@ -334,7 +390,7 @@ The plan role has explicit EC2, ELB, IAM, and CloudFront reads for the existing 
 
 Planning is serialized in GitHub and uses S3 native locking with a five-minute wait. Terraform exit 0 means no changes; exit 2 means a successful plan with changes; every other exit fails the job. The job checks migrated-state identity first and exposes only action counts and success/failure. State, saved plans, JSON plans, and full diagnostics remain in a restricted temporary runner directory removed on exit. No plan artifact, full plan comment, or full plan log is published. On a plan failure, only missing API action names may appear publicly; investigate other failures in an authorized private session.
 
-P06's validation PR is [PR #1](https://github.com/amanya/Crescendo-DevOps-exam/pull/1). [The successful source-validation run](https://github.com/amanya/Crescendo-DevOps-exam/actions/runs/38732314501) passed both required checks at commit `873a15f`. It confirmed the exact OIDC subject/audience, the original lineage and all 33 managed resource IDs, and a real plan exit 0 with 33 no-op actions. No workload recreation was proposed. The final documentation commit runs the same checks again; its current status is visible on the PR. P06 is Verified and P07 is Ready. Leave the PR open for review. Collaborator invitations and final submission remain P07 work.
+P06's validation PR is [PR #1](https://github.com/amanya/Crescendo-DevOps-exam/pull/1). [The successful source-validation run](https://github.com/amanya/Crescendo-DevOps-exam/actions/runs/38732314501) passed both required checks at commit `873a15f`. It confirmed the exact OIDC subject/audience, the original lineage and all 33 managed resource IDs, and a real plan exit 0 with 33 no-op actions. No workload recreation was proposed. The final source commit `17578c3` also passed both checks in [run 38733933017](https://github.com/amanya/Crescendo-DevOps-exam/actions/runs/38733933017). P06 passed independent review, and PR #1 was merged into `main` as `89520bd`. P07 uses a separate PR for lifecycle evidence and submission preparation. The user will handle reviewer invitations and final submission.
 
 ### Recovery and teardown order
 
@@ -349,6 +405,6 @@ When teardown is separately authorized:
 3. Preserve the final workload state and bootstrap state outside the bucket. Remove the CI role/policy; remove the OIDC provider only if it is still unused by other roles.
 4. Review a bootstrap teardown that deliberately removes bucket `prevent_destroy`. Remove all object versions and delete markers only after retaining the recovery copies. The bucket's `force_destroy = false` will otherwise block deletion of a nonempty bucket. Destroy the remaining bootstrap resources last.
 
-[Private-repository validation](https://github.com/amanya/Crescendo-DevOps-exam/actions/runs/38733705991) passed both CI jobs, confirmed the original state lineage/all 33 managed IDs, and produced plan exit 0 with 33 no-op actions. Anonymous CloudFront health checks also passed after the visibility change. Private-repository Actions runs consume the account's included minutes or applicable billing allowance; see [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions). The visibility change keeps the configured repository/owner IDs, workflow reference, and OIDC subject; the trust policy does not depend on repository visibility. The deployed application and S3 backend do not fetch source from GitHub and continue running independently. Submission visibility must be confirmed during P07; do not make the repository public again without authorization.
+[Private-repository validation](https://github.com/amanya/Crescendo-DevOps-exam/actions/runs/38733705991) passed both CI jobs, confirmed the original state lineage/all 33 managed IDs, and produced plan exit 0 with 33 no-op actions. Anonymous CloudFront health checks also passed after the visibility change. Private-repository Actions runs consume the account's included minutes or applicable billing allowance; see [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions). The visibility change keeps the configured repository/owner IDs, workflow reference, and OIDC subject; the trust policy does not depend on repository visibility. The deployed application and S3 backend do not fetch source from GitHub and continue running independently. The exam asks for a public repository, while this repository remains private at the user's request. The user must arrange reviewer access or obtain acceptance of private submission. See [submission decisions](docs/submission.md#submission-access-and-decisions).
 
 No teardown or collaborator invitation was performed during P06.

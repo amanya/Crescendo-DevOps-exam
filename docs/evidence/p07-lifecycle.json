@@ -1,0 +1,205 @@
+{
+  "created": {
+    "phase": "create",
+    "origin": "https://d2xpkbus8fu2t7.cloudfront.net",
+    "boot_id": "ea161690-9605-466b-8052-3ed770aa3b46",
+    "node_path": "/travel/p07-lifecycle-20261015",
+    "readiness": 200,
+    "authenticated_admincentral": true,
+    "initial_node_status": 404,
+    "create_status": 200,
+    "identifier": "3f86dd01-d946-4fe6-8e84-3780df71ca25",
+    "title": "P07 lifecycle verification 2026-10-15",
+    "marker": "Created before reboot; intentionally discarded on instance replacement.",
+    "content_matches": true,
+    "logout_revokes_access": true,
+    "passed": true
+  },
+  "after_reboot": {
+    "phase": "retained",
+    "origin": "https://d2xpkbus8fu2t7.cloudfront.net",
+    "boot_id": "3e6da847-94d5-4f2d-a148-7b4487f20191",
+    "node_path": "/travel/p07-lifecycle-20261015",
+    "readiness": 200,
+    "authenticated_admincentral": true,
+    "initial_node_status": 200,
+    "identifier": "3f86dd01-d946-4fe6-8e84-3780df71ca25",
+    "title": "P07 lifecycle verification 2026-10-15",
+    "marker": "Created before reboot; intentionally discarded on instance replacement.",
+    "content_matches": true,
+    "same_identifier": true,
+    "boot_id_changed": true,
+    "logout_revokes_access": true,
+    "passed": true
+  },
+  "replacement": {
+    "instance_before": "i-03e2b17589905593d",
+    "instance_after": "i-025b0f60830e52130",
+    "root_before": "vol-0507e0dd3d123a7d3",
+    "root_after": "vol-05d3b44af9b7d13fa",
+    "old_instance_state": "terminated",
+    "old_root_describe_error": "InvalidVolume.NotFound",
+    "saved_plan_only_instance_and_attachment": true,
+    "apply": {
+      "added": 2,
+      "changed": 0,
+      "destroyed": 2
+    },
+    "same_cloudfront_distribution": "E178D8X4DHIIP9",
+    "implicit_primary_eni_before": "eni-0ddfa8021c3105d4a",
+    "implicit_primary_eni_after": "eni-0f7a88c2bde36183d",
+    "private_ip_before": "10.42.10.237",
+    "private_ip_after": "10.42.10.244",
+    "new_target_health": "healthy",
+    "only_new_target_registered": true,
+    "cpu_credits": "standard",
+    "cloudfront_status": "Deployed"
+  },
+  "state_comparison": {
+    "lineage_preserved": true,
+    "before_serial": 42,
+    "after_serial": 44,
+    "managed_instances": 33,
+    "unchanged_identities": 31,
+    "changed": [
+      {
+        "type": "aws_instance",
+        "name": "magnolia",
+        "before": "i-03e2b17589905593d",
+        "after": "i-025b0f60830e52130"
+      },
+      {
+        "type": "aws_lb_target_group_attachment",
+        "name": "magnolia",
+        "before": "arn:aws:elasticloadbalancing:eu-central-1:317399646022:targetgroup/crescendo-exam-magnolia/b2a5f934ec75e3ed,i-03e2b17589905593d,80",
+        "after": "arn:aws:elasticloadbalancing:eu-central-1:317399646022:targetgroup/crescendo-exam-magnolia/b2a5f934ec75e3ed,i-025b0f60830e52130,80"
+      }
+    ],
+    "identities_sha256": "b1d6740e8d948303ff3a83330e9db3de44164b3966ebbebdecb8ab741c48788f",
+    "passed": true,
+    "ancillary_refresh_matches_baseline_plan": true
+  },
+  "local_plans": {
+    "baseline_workload_exit": 0,
+    "final_workload_exit": 0,
+    "final_bootstrap_exit": 0
+  },
+  "after_replacement": {
+    "phase": "absent",
+    "origin": "https://d2xpkbus8fu2t7.cloudfront.net",
+    "boot_id": "56b0d29c-556e-4f6a-a498-3b1711fc46dc",
+    "node_path": "/travel/p07-lifecycle-20261015",
+    "readiness": 200,
+    "authenticated_admincentral": true,
+    "initial_node_status": 404,
+    "test_content_absent": true,
+    "fresh_travel_sample_present": true,
+    "boot_id_changed": true,
+    "logout_revokes_access": true,
+    "passed": true
+  },
+  "authenticated_http_after_replacement": {
+    "viewer_http_redirects_to_https": true,
+    "relative_root_context_redirects": true,
+    "readiness_status": 200,
+    "uncached_404_status_preserved": true,
+    "csrf_form_present": true,
+    "anonymous_login_status": 401,
+    "csrf_cookie_attributes": [
+      {
+        "path": "/magnoliaAuthor",
+        "secure": true,
+        "http_only": true
+      }
+    ],
+    "viewer_protocol_spoof_does_not_downgrade_cookie": true,
+    "login_assets_checked": 3,
+    "invalid_csrf_rejected": true,
+    "login_status": 302,
+    "session_created_or_rotated": true,
+    "session_cookie_attributes": [
+      {
+        "path": "/magnoliaAuthor",
+        "secure": true,
+        "http_only": true
+      }
+    ],
+    "sample_assets_checked": 6,
+    "admin_sample_content_query_and_session_reuse": true,
+    "anonymous_session_isolation": true,
+    "logout_revokes_access": true,
+    "passed": true
+  },
+  "provisioning": {
+    "cloud_init": {
+      "status": "done",
+      "extended_status": "done",
+      "boot_status_code": "enabled-by-generator",
+      "exit_code": 0
+    },
+    "bootstrap": {
+      "complete": true,
+      "failure_lines": [],
+      "nginx_native_check": true
+    },
+    "bootstrap_complete_count": 1,
+    "magnolia": {
+      "Result": "success",
+      "NRestarts": "0",
+      "ExecMainStatus": "0",
+      "ActiveState": "active",
+      "SubState": "running",
+      "ActiveEnterTimestamp": "Thu 2026-10-15 12:49:53 UTC"
+    },
+    "nginx": {
+      "Result": "success",
+      "NRestarts": "0",
+      "ExecMainStatus": "0",
+      "ActiveState": "active",
+      "SubState": "running",
+      "ActiveEnterTimestamp": "Thu 2026-10-15 12:49:53 UTC"
+    },
+    "readiness_80": 200,
+    "readiness_8080": 200,
+    "nginx_check_exit": 0,
+    "unit_check_exit": 0,
+    "startup_ms": [
+      "399990"
+    ],
+    "oom_markers": 0
+  },
+  "browser_after_replacement": {
+    "blocked_requests": 3,
+    "blocked_destinations": [
+      "https://fonts.googleapis.com",
+      "https://cdn.jsdelivr.net",
+      "https://static.addtoany.com"
+    ],
+    "unexpected_blocked_requests": 0,
+    "mixed_content_errors": 0,
+    "page_errors": 0,
+    "admincentral_pages_and_assets_rendered": true,
+    "session_cookie": {
+      "secure": true,
+      "httpOnly": true,
+      "path": "/magnoliaAuthor",
+      "sameSite": "Lax"
+    },
+    "sample_page_and_images_rendered": true,
+    "session_reused_after_navigation_and_reload": true,
+    "separate_browser_context_stays_anonymous": true,
+    "logout_and_subsequent_access_return_login": true,
+    "all_document_navigation_stayed_on_cloudfront_https": true,
+    "passed": true
+  },
+  "screenshots": {
+    "travel.jpg": {
+      "bytes": 44099,
+      "sha256": "6a92d02906347ab942f2fd9b64ccf86a3acbf72d17cea55aa2fd05ffc177e36e"
+    },
+    "admincentral.jpg": {
+      "bytes": 25347,
+      "sha256": "e90e0cba46d1976f7129e05c0b403d26221b180777d629c8495ec09b8834d29a"
+    }
+  }
+}

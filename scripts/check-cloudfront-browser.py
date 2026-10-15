@@ -89,6 +89,12 @@ def main():
         with page.expect_navigation(wait_until='domcontentloaded', timeout=120000):
             page.get_by_role('button', name='Login', exact=True).click()
         admin_ready()
+        # Fresh repositories show a first-login statistics notice. Dismiss it
+        # without opting in so the application remains visible in the capture.
+        notice = page.get_by_text('Help make Magnolia better', exact=True)
+        if notice.is_visible():
+            page.locator('.v-window-closebox').click()
+            notice.wait_for(state='hidden', timeout=10000)
         EVIDENCE['admincentral_pages_and_assets_rendered'] = True
         cookies = [c for c in context.cookies() if c['name'] == 'JSESSIONID']
         assert len(cookies) == 1
@@ -109,7 +115,9 @@ def main():
         page.wait_for_function('Array.from(document.images).some(image => image.complete && image.naturalWidth > 0)', timeout=30000)
         EVIDENCE['sample_page_and_images_rendered'] = True
         if args.screenshot_dir:
-            page.screenshot(path=str(args.screenshot_dir / 'travel.jpg'), type='jpeg', quality=30)
+            # Allow the hero transition and its background image to settle.
+            page.wait_for_timeout(3000)
+            page.screenshot(path=str(args.screenshot_dir / 'travel.jpg'), type='jpeg', quality=40, animations='disabled')
         page.goto(base + ADMIN, wait_until='domcontentloaded', timeout=120000)
         admin_ready()
         page.reload(wait_until='domcontentloaded', timeout=120000)
