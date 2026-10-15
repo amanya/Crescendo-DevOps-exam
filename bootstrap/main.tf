@@ -129,7 +129,7 @@ resource "aws_iam_role_policy" "plan" {
         Sid    = "RefreshEC2"
         Effect = "Allow"
         Action = [
-          "ec2:DescribeAddresses", "ec2:DescribeImages", "ec2:DescribeInstances",
+          "ec2:DescribeAddresses", "ec2:DescribeAddressesAttribute", "ec2:DescribeImages", "ec2:DescribeInstances",
           "ec2:DescribeInstanceAttribute", "ec2:DescribeInstanceCreditSpecifications",
           "ec2:DescribeInternetGateways", "ec2:DescribeManagedPrefixLists",
           "ec2:DescribeNatGateways", "ec2:DescribeRouteTables",
@@ -138,6 +138,13 @@ resource "aws_iam_role_policy" "plan" {
           "ec2:DescribeVpcs", "ec2:DescribeVpcAttribute"
         ]
         Resource  = "*"
+        Condition = { StringEquals = { "aws:RequestedRegion" = "eu-central-1" } }
+      },
+      {
+        Sid       = "ReadCloudFrontPrefixEntries"
+        Effect    = "Allow"
+        Action    = ["ec2:GetManagedPrefixListEntries"]
+        Resource  = "arn:aws:ec2:eu-central-1:aws:prefix-list/pl-a3a144ca"
         Condition = { StringEquals = { "aws:RequestedRegion" = "eu-central-1" } }
       },
       {
@@ -165,16 +172,20 @@ resource "aws_iam_role_policy" "plan" {
         Resource = "*"
       },
       {
-        Sid      = "ReadManagedCloudFrontPolicies"
-        Effect   = "Allow"
-        Action   = ["cloudfront:GetCachePolicy", "cloudfront:GetResponseHeadersPolicy"]
-        Resource = ["arn:aws:cloudfront::aws:cache-policy/*", "arn:aws:cloudfront::aws:response-headers-policy/*"]
+        Sid    = "ReadManagedCloudFrontPolicies"
+        Effect = "Allow"
+        Action = ["cloudfront:GetCachePolicy", "cloudfront:GetResponseHeadersPolicy"]
+        # Managed policy authorization uses the caller's account namespace.
+        Resource = [
+          "arn:aws:cloudfront::317399646022:cache-policy/4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+          "arn:aws:cloudfront::317399646022:response-headers-policy/67f7725c-6f97-4210-82d7-5512b31e9d03"
+        ]
       },
       {
         Sid      = "RefreshCloudFront"
         Effect   = "Allow"
         Action   = ["cloudfront:GetDistribution", "cloudfront:GetOriginRequestPolicy", "cloudfront:ListTagsForResource"]
-        Resource = ["arn:aws:cloudfront::317399646022:distribution/E178D8X4DHIIP9", "arn:aws:cloudfront::317399646022:origin-request-policy/*"]
+        Resource = ["arn:aws:cloudfront::317399646022:distribution/E178D8X4DHIIP9", "arn:aws:cloudfront::317399646022:origin-request-policy/e9bc0830-e577-4b14-8e94-8beda10766f5"]
       }
     ]
   })
