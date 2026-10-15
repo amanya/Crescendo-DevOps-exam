@@ -1,5 +1,7 @@
 # Terraform working directories, state, plans, and local inputs
 .terraform/
+.state-backups/
+*.tflock
 *.tfstate
 *.tfstate.*
 .terraform.tfstate.lock.info

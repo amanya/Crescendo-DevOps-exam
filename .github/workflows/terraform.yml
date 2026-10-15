@@ -1,0 +1,44 @@
+name: Terraform
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Format and validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+      - run: terraform fmt -check -recursive
+      - name: Validate without backend or AWS credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          for directory in bootstrap infra; do
+            export TF_DATA_DIR="$(mktemp -d)"
+            terraform -chdir="$directory" init -backend=false -input=false -lockfile=readonly
+            terraform -chdir="$directory" validate
+            rm -rf "$TF_DATA_DIR"
+          done
+
+  plan:
+    name: Trusted PR
+    needs: validate
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+      id-token: write
+    uses: amanya/Crescendo-DevOps-exam/.github/workflows/terraform-plan.yml@main
