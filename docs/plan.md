@@ -6,7 +6,7 @@ Updated: 2026-10-15 (Europe/Madrid)
 
 P01 is Verified. Git is initialized on `main` with an initial local commit. Terraform 1.16.6 is installed, and the minimal configuration has initialized with AWS provider 6.69.0. Formatting, validation, ignore-rule checks, and the sensitive-content review passed.
 
-P01 review passed. P02 is Verified against its preparation criteria: the official Magnolia CE package is downloaded and pinned, compatibility is checked, and the provisioning templates pass local checks. The P02/P03 interface is recorded below. EC2 execution and all application runtime claims remain pending P04. EC2 size and origin encryption remain undecided. No infrastructure has been deployed.
+P01 and P02 reviews passed. P02 is Verified against its preparation criteria: the official Magnolia CE package is downloaded and pinned, compatibility is checked, and the provisioning templates pass local checks. P03 is Verified against its preparation criteria: Terraform defines the agreed VPC, private EC2 instance, and public ALB, and the real plan has 31 additions, no changes, and no deletions. EC2 uses a pinned Canonical Ubuntu 24.04 amd64 release, `t3.medium`, and one 30 GiB gp3 root disk. P04 and P06 are Ready. No infrastructure has been applied; deployment and all application runtime claims remain pending P04. Origin encryption remains a P05 decision.
 
 ## Agreed scope
 
@@ -44,10 +44,10 @@ Tasks move through Ready, In progress, and Verified. Queued tasks are waiting fo
 | P00 | AWS access | Verified | None | Primary agent |
 | P01 | Repository and tooling | Verified | P00 | Primary agent |
 | P02 | Magnolia provisioning | Verified | P00 | Primary agent |
-| P03 | VPC, EC2, and ALB | Ready | P01 | Unassigned |
-| P04 | Application integration | Queued | P02, P03 | Unassigned |
+| P03 | VPC, EC2, and ALB | Verified | P01, P02 interface | Primary agent |
+| P04 | Application integration | Ready | P02, P03 | Unassigned |
 | P05 | CloudFront | Queued | P04 | Unassigned |
-| P06 | Remote state and PR checks | Queued | P01, P03 | Unassigned |
+| P06 | Remote state and PR checks | Ready | P01, P03 | Unassigned |
 | P07 | Lifecycle and submission | Queued | P04, P05, P06 | Unassigned |
 
 ### P00: AWS access
@@ -63,7 +63,7 @@ Tasks move through Ready, In progress, and Verified. Queued tasks are waiting fo
 
 Done when Git is initialized, ignore rules protect local configuration/state/artifacts/secrets while retaining the provider lock file, Terraform is installed, minimal Terraform/provider configuration uses profile `default` and region `eu-central-1`, local initialization generates the lock file, and the README explains purpose, prerequisites, setup, and deployment status. Formatting, validation, and a sensitive-content review must pass before the initial local commit. Remote state, resource creation, CI, and publication remain in later tasks.
 
-Verified on 2026-10-15; validation evidence is recorded below. P03's P01 dependency is satisfied. Agree on the P02/P03 application interface before parallel implementation; P06 remains Queued until P03 is verified.
+Verified on 2026-10-15; validation evidence is recorded below. P03's P01 dependency is satisfied. The P02/P03 application interface is agreed, and P03 verification also makes P06 Ready.
 
 ### P02: Application provisioning
 
@@ -74,7 +74,7 @@ Verified on 2026-10-15; validation evidence is recorded below. P03's P01 depende
 
 Done when we've checked artifact access and version compatibility and have an installation procedure ready to deploy. P04 checks that it runs on EC2.
 
-Verified on 2026-10-15 for those preparation criteria; evidence is recorded below. This checkpoint stops before P03 infrastructure work. Runtime acceptance remains with P04.
+Verified on 2026-10-15 for those preparation criteria; evidence is recorded below. P03 now consumes the interface below without changing the templates. Runtime acceptance remains with P04.
 
 ### P02/P03 interface
 
@@ -86,7 +86,7 @@ P02 owns `infra/templates/bootstrap.sh.tftpl`, `infra/templates/nginx.conf.tftpl
 | Artifact pin | SHA-256 `8ba8ea6bcaffb7c6f6895d2ed024e322bfed546f6e475c710018b7a3b16b1a99`; top directory `travel-demo-community-webapp-6.3.27/apache-tomcat-9.0.121` |
 | Runtime | Bundled Tomcat 9.0.121; Ubuntu `openjdk-17-jre-headless`, Java home `/usr/lib/jvm/java-17-openjdk-amd64`; keep repository patch updates |
 | OS and CPU | Ubuntu Server 24.04 LTS with cloud-init/systemd, x86_64 (`amd64`). Bootstrap rejects another release or architecture. P03 selects the AMI |
-| Sizing | Heap `-Xms256m -Xmx2048m`; allow at least 4 GiB RAM. P03 still chooses instance and root-disk sizes; P04 checks memory and disk use |
+| Sizing | Heap `-Xms256m -Xmx2048m`; allow at least 4 GiB RAM. P03 selects `t3.medium` (2 vCPUs, 4 GiB RAM), standard CPU credits, and a 30 GiB gp3 root disk; P04 checks memory/disk use and CPU-credit/startup behavior |
 | Terraform rendering | `nginx.conf.tftpl` and `magnolia.service.tftpl` each take `{}`. Base64-encode each rendered result and pass strings `nginx_config_b64` and `magnolia_service_b64` to `bootstrap.sh.tftpl`; assign rendered bootstrap to `user_data`. README includes the complete expression. No credential inputs |
 | Fixed configuration | Package URL/checksum, ports, paths, and context are pinned in the templates. Keep them together when reviewing an update. User-data changes should replace the instance so the package and CMS are rebuilt |
 | Nginx target | HTTP `80`, default host; only ALB security-group ingress. `/` redirects to `/magnoliaAuthor/`. Other webapps are removed |
@@ -116,6 +116,16 @@ P02 limitations: no EC2 execution; Java/Nginx patch versions follow apt reposito
 - Add useful outputs and explain the availability limits of using one instance and one NAT Gateway.
 
 Done when formatting and validation pass, the Terraform plan matches the agreed architecture, and the code is ready to deploy.
+
+Verified on 2026-10-15 for these preparation criteria. The real plan contains 31 additions, no changes, and no deletions. No apply was run. Files: `infra/network.tf`, `infra/compute.tf`, `infra/load-balancer.tf`, `infra/variables.tf`, `infra/outputs.tf`, and the provider update; README documents sizing, prerequisites, and limitations. P02 templates/checker remain unchanged, and its independent review update is preserved.
+
+The VPC is `10.42.0.0/16`; public subnets are `10.42.0.0/24` and `10.42.1.0/24`, private subnets are `10.42.10.0/24` and `10.42.11.0/24`, in `eu-central-1a` and `eu-central-1b`. One shared public route table targets the Internet Gateway; one shared private route table targets the NAT Gateway and Elastic IP in public subnet `a`. EC2 uses private subnet `a` with no public IP. Explicit dependencies wait for the outbound routes, associations, instance rules, and SSM policy attachment before instance creation.
+
+The official Canonical AMI is pinned by exact release name through `ubuntu_ami_name`, with owner/architecture/HVM/EBS/state filters. The reviewed default is `ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-20261004`, resolving to `ami-0e27250725fa51794`. Pinning avoids automatic image updates replacing the instance and deleting CMS content. `t3.medium` provides 2 vCPUs and 4 GiB RAM for the 2 GiB heap plus OS/JVM overhead. Standard CPU credits avoid surplus-credit charges but may slow sustained work and first-run initialization. The single 30 GiB gp3 root disk allows space for the OS, installation staging, CMS data, and logs. It is deleted on termination and has no encryption or key override.
+
+Systems Manager uses the AMI's preinstalled agent, a new EC2 role/profile with `AmazonSSMManagedInstanceCore`, and HTTPS through NAT. IMDSv2 is required. The instance accepts only ALB-sourced TCP 80 and sends TCP 80/443 outbound; Tomcat remains on loopback. The public ALB spans both zones, accepts HTTP 80, and sends HTTP 80 only to the instance group. Its health check uses the interface's exact path, `200` matcher, and 30/5-second interval/timeout with thresholds 2/3. Outputs cover the network, instance, AMI, NAT IP, target group, ALB hostname/zone, and author/readiness URLs.
+
+Limits remain one instance, one root disk, and one NAT Gateway, without automatic failover or backups. Two ALB zones do not provide application high availability. Both private subnets depend on NAT in zone `a`; future zone `b` egress crosses zones. HTTP is unencrypted and the ALB is publicly reachable; P05 owns browser HTTPS and the origin policy. Deployment write permissions, quotas/capacity, the running SSM Agent, and all bootstrap/application behavior remain unverified. P04 and P06 dependencies are satisfied; the next implementation task is P04 after this local review checkpoint.
 
 ### P04: Application integration
 
@@ -228,4 +238,10 @@ Agreed on 2026-10-15:
 - P02 local checks: Terraform's real `templatefile` renderer succeeded for all three templates in an isolated directory, without provider initialization or AWS access. `bash -n` passed for bootstrap, generated `setenv.sh`, and generated readiness helper; embedded Python compiled. The actual archive's properties/XML accepted the provisioning transform twice without further changes, including the loopback connector and disabled shutdown port. Rendered user data is 9,442 bytes, below EC2's 16 KiB raw limit. `scripts/check-provisioning.py --archive <local-zip>` repeats these checks. Core class-file major version 61 confirms Java 17 bytecode. Mocked readiness checks accepted 200 and rejected 302, 503, and connection-failure status; these are local helper checks, not application runtime evidence.
 - P02 configuration checks: ShellCheck 0.11.0 passed the rendered bootstrap and readiness helper with only SC1091 excluded for the target OS's `/etc/os-release`. Nginx 1.24.0 compiled from official source passed `nginx -t` against the rendered site in an HTTP wrapper, relocating log paths into `/tmp` on macOS. No server was started. Docker was unavailable, so native Ubuntu/systemd checks remain P04 work; bootstrap includes `nginx -t` and `systemd-analyze verify` before startup.
 - P02 review: all six changed files were inspected, the P01 review update was preserved, local README/plan links resolve, Terraform formatting and whitespace checks passed, and a sensitive-content pattern scan found no AWS access keys, private keys, GitHub tokens, literal credential values, or credentials in URLs. Generated downloads and rendered files stay outside Git. Unit sections and commands were inspected; native systemd verification remains pending.
-- No current P01/P02 preparation blocker. P02's runtime checks and deployment permissions remain unverified for later tasks. Next: review this local P02 commit, then start P03 using the recorded interface when requested. Stop at this checkpoint.
+- P02 independent review: checked commit `f6d23c3` with a clean working tree. Re-ran the provisioning checker against the downloaded archive: checksum, ZIP integrity, bundled versions, embedded persistence, repeatable transforms, template rendering, Bash syntax, and embedded Python compilation passed. Rendered user data is 9,442 bytes. ShellCheck 0.11.0 and the local Nginx configuration check passed; Nginx required permission to run its macOS sysctl check outside the sandbox. The checked Nginx site matches the rendered template with only log paths relocated. Formatting, whitespace, and local documentation file-link checks passed. No blocking findings for P02's preparation scope; native Ubuntu/systemd and Magnolia runtime checks remain P04 work.
+- P03 AWS lookup: AWS MCP retrieved compute, networking, IAM, and instance-profile guidance and checked official VPC/SSM/ALB documentation. Successful `STS.GetCallerIdentity`, `EC2.DescribeImages`, `EC2.DescribeInstanceTypes`, `EC2.DescribeAvailabilityZones`, and `EC2.DescribeInstanceTypeOfferings` calls confirmed the expected account, Canonical owner, Ubuntu 24.04 x86_64 release, 4 GiB/2-vCPU `t3.medium`, and its offering in both chosen zones. Availability is not a reservation or a deployment-permission check.
+- P03 checks: `terraform -chdir=infra fmt -check -recursive`, `terraform -chdir=infra validate -no-color`, and `git diff --check` passed. Validation required the local provider process to run outside the sandbox. `python3 scripts/check-provisioning.py` passed; repeating with `--archive /private/tmp/crescendo-p02/magnolia.zip` and ShellCheck 0.11.0 on PATH passed Bash syntax, embedded Python compilation, archive checksum/integrity, versions, persistence, and repeated transforms.
+- P03 real plan: `terraform -chdir=infra plan -input=false -no-color -out=../build/p03/p03.tfplan` succeeded against AWS with profile `default` in `eu-central-1`, using Terraform 1.16.6 and AWS provider 6.69.0. It proposes 31 creations, no changes, and no deletions. The saved plan, JSON/text output, and dependency graph remain under ignored `build/p03/`. No apply or AWS mutation was performed.
+- P03 plan review: inspected the plan, its JSON configuration/references, and `terraform graph -type=plan`. Local assertions passed for resource counts, provider/account, distinct two-zone subnets, IGW/NAT routes and all four associations, private placement/no public IP, instance profile/SSM attachment, ALB-only ingress, restricted egress, one 30 GiB gp3 root with deletion and omitted encryption/key overrides, listener/target attachment, and exact readiness timings/matcher. Graph traversal confirmed EC2 waits for NAT, IGW, routes, associations, egress rules, and the SSM policy. Rendered user data equals the P02 checker output byte for byte (9,442 bytes); decoded embedded Nginx and service files also match.
+- P03 final review: reviewed all eight changed files, preserved the existing P02 independent review, and left the P02 templates/checker, provider lock, and agent instructions unchanged. Local documentation file links, sensitive-content pattern checks, and representative ignore checks for generated plans/state/artifacts passed. The provider lock remains tracked. The changes are ready for a focused local P03 commit.
+- P03 has no preparation blocker. P04 must generate/review a fresh plan, verify deployment permissions/quotas, apply only in its authorized session, and check SSM Online, NAT downloads, native configuration checks, bootstrap/initialization, ALB health and failure/recovery, loopback/SG restrictions, private login, assets/redirects/sessions, sizing/credits, and reboot reuse. P07 owns the full lifecycle demonstration. Stop here for review; CloudFront, remote state, CI, and publication remain later work.
