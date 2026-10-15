@@ -1,3 +1,7 @@
+data "aws_ec2_managed_prefix_list" "cloudfront" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
 resource "aws_security_group" "alb" {
   name        = "${local.name}-alb"
   description = "Public HTTP entry point"
@@ -8,11 +12,11 @@ resource "aws_security_group" "alb" {
 
 resource "aws_vpc_security_group_ingress_rule" "alb_http" {
   security_group_id = aws_security_group.alb.id
-  cidr_ipv4         = "0.0.0.0/0"
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront.id
   ip_protocol       = "tcp"
   from_port         = 80
   to_port           = 80
-  description       = "Public HTTP for the P04 ALB integration check"
+  description       = "HTTP origin traffic from CloudFront managed addresses"
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb_http" {

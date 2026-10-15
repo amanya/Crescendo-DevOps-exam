@@ -1,10 +1,10 @@
 # Crescendo DevOps exam
 
-Deploy Magnolia Community Edition on AWS with Terraform for the Crescendo DevOps exam. The planned request path is browser -> CloudFront -> ALB -> Nginx -> Tomcat/Magnolia on one private EC2 instance.
+Deploy Magnolia Community Edition on AWS with Terraform for the Crescendo DevOps exam. The request path is browser -> CloudFront -> ALB -> Nginx -> Tomcat/Magnolia on one private EC2 instance.
 
 ## Current status
 
-P01, P02, and P03 are verified for preparation. P04 is verified: Terraform applied all 31 planned resources in account `317399646022`, region `eu-central-1`, on 2026-10-15. Magnolia initialized automatically and is reachable through the public ALB. Private login, sample content, assets, sessions, Magnolia stop/start recovery, and reboot reuse passed. The final Terraform plan reports no changes. P05 is Ready. CloudFront belongs to P05; remote state and CI belong to P06.
+P01 through P04 are verified. P05 is in progress: CloudFront and the proxy changes are deployed in account `317399646022`, region `eu-central-1`, on 2026-10-15. The login page renders over HTTPS, readiness is exact 200, the ALB target is healthy, and Terraform reports no drift. Authenticated CloudFront checks await permission to extend P04's loopback-only password-file exception. The instance replacement intentionally started a fresh CMS. Remote state and CI belong to P06.
 
 The infrastructure uses two public and two private subnets across two availability zones, one NAT Gateway, and one private EC2 instance. The OS, software, and CMS data share one EBS root volume, deleted on termination. Instance replacement reinstalls the application and starts a fresh CMS. EBS encryption follows the AWS account and AMI defaults.
 
@@ -56,12 +56,14 @@ infra/variables.tf          Reviewed Ubuntu AMI release input
 infra/network.tf            VPC, subnets, Internet Gateway, NAT, and routing
 infra/compute.tf            AMI, instance role/profile, security group, and EC2
 infra/load-balancer.tf      ALB security group, listener, target, and health check
-infra/outputs.tf            Verification endpoints, resource IDs, and origin hostname
+infra/cloudfront.tf         Distribution, disabled caching, forwarding, and security headers
+infra/outputs.tf            HTTPS endpoints, resource IDs, and origin hostname
 infra/.terraform.lock.hcl   Provider selection and checksums
 infra/templates/           Bootstrap, Nginx site, and Magnolia systemd unit
 scripts/check-provisioning.py  Local template and archive checks
 scripts/check-runtime.py       Sanitized on-instance diagnostics
 scripts/check-private-login.py  SSM/loopback login, content, and session checks
+scripts/check-cloudfront.py     Sanitized public HTTPS and on-instance session checks
 ```
 
 ## Infrastructure and sizing
@@ -84,7 +86,7 @@ The official Ubuntu Server 24.04 LTS amd64 AMI comes from Canonical owner `09972
 
 `t3.medium` has 2 vCPUs and 4 GiB RAM, meeting the P02 minimum while leaving memory outside the 2 GiB Java heap for the OS, Nginx, and JVM overhead. It uses standard CPU credits to avoid surplus-credit charges; sustained CPU load can throttle it, including first-run initialization. The 30 GiB gp3 root disk is a starting size for the demo, with space beyond the AMI's 8 GiB minimum for package extraction, repository growth, and logs. The first healthy run used about 953 MiB of JVM cgroup memory (1,775 MiB peak), with about 2,409 MiB available RAM and 25.20 GiB free disk. Tomcat reported 407 seconds for initial startup; cloud-init and both services completed about nine minutes after launch. CloudWatch showed a zero credit balance and roughly 20% CPU use during initialization, with zero surplus credits charged. Idle periods then earned credits and later startup consumed them. These measurements confirm the expected standard-mode behavior; no workload capacity test was performed.
 
-The ALB security group accepts public TCP 80 and sends TCP 80 only to the instance security group. The instance accepts TCP 80 only from the ALB security group and permits outbound TCP 80/443 for Ubuntu packages, Magnolia, and Systems Manager through NAT. The VPC resolver provides DNS. There is no inbound rule for SSH or Tomcat; the existing template binds Tomcat to `127.0.0.1:8080`. HTTP is unencrypted at this stage, and the ALB is directly reachable. Browser HTTPS and the CloudFront origin connection policy remain P05 decisions.
+The ALB security group accepts TCP 80 only from AWS's managed CloudFront origin-facing prefix list and sends TCP 80 only to the instance security group. The instance accepts TCP 80 only from the ALB security group and permits outbound TCP 80/443 for Ubuntu packages, Magnolia, and Systems Manager through NAT. The VPC resolver provides DNS. There is no inbound rule for SSH or Tomcat; the existing template binds Tomcat to `127.0.0.1:8080`. Browser traffic uses HTTPS to CloudFront. CloudFront-to-ALB and ALB-to-Nginx traffic use unencrypted HTTP. Direct browser access to the ALB is blocked by its security group. The prefix list admits CloudFront origin traffic generally, rather than identifying this distribution; distribution-specific origin authentication remains a limitation.
 
 The instance profile trusts EC2 and attaches only `AmazonSSMManagedInstanceCore`. Ubuntu Server 24.04 images [include SSM Agent](https://docs.aws.amazon.com/systems-manager/latest/userguide/ami-preinstalled-agent.html); P04 confirmed agent `3.3.4793.0` running and the node Online. Its HTTPS connections use NAT, so this configuration needs no VPC endpoints or inbound management ports. Human operators separately need Systems Manager session permissions and either the AWS console or the CLI Session Manager plugin. Session output logging is not configured here.
 
@@ -92,51 +94,72 @@ EC2 explicitly depends on both default routes, all public/private route-table as
 
 ## Plan review and deployment prerequisites
 
-The checked configuration requires no variable file. Planning needs STS identity access and EC2 image lookup permissions. The deployer must also be able to create, read, tag, update, and delete the planned EC2/VPC, Elastic IP/NAT, ELBv2, and IAM resources, attach the SSM managed policy, and pass the instance role to EC2. Elastic Load Balancing may need permission to create its service-linked role if it is absent. A successful plan does not verify these write permissions or available quotas/capacity.
+The checked configuration requires no variable file. Planning needs STS identity access, EC2 image/managed-prefix-list lookup permissions, and CloudFront managed-policy read permissions. The deployer must also be able to create, read, tag, update, and delete the planned EC2/VPC, Elastic IP/NAT, ELBv2, IAM, and CloudFront distribution/request-policy resources, attach the SSM managed policy, and pass the instance role to EC2. Elastic Load Balancing may need permission to create its service-linked role if it is absent. A successful plan does not verify these write permissions or available quotas/capacity.
 
-Before a new deployment, confirm capacity and quotas for a VPC, four subnets, one NAT Gateway/Elastic IP, an ALB/target group, and a 2-vCPU on-demand instance. Keep the chosen AMI available, the Ubuntu repositories and `nexus.magnolia-cms.com` reachable, and public TCP 80 reachable for the ALB integration check. No certificate, domain, application secret input, remote backend, or GitHub setup is required for this stage.
+Before a new deployment, confirm capacity and quotas for a VPC, four subnets, one NAT Gateway/Elastic IP, an ALB/target group, and a 2-vCPU on-demand instance. Keep the chosen AMI available, the Ubuntu repositories and `nexus.magnolia-cms.com` reachable, and CloudFront origin-facing TCP 80 reachable at the ALB. CloudFront uses its default hostname and certificate, so no customer certificate or domain is required. There is no application secret input, remote backend, or GitHub setup in this stage.
 
 To prepare a fresh plan, run from the repository root:
 
 ```sh
-mkdir -p build/p04
+mkdir -p build/p05
 terraform -chdir=infra fmt -check -recursive
 terraform -chdir=infra validate
 python3 scripts/check-provisioning.py
-terraform -chdir=infra plan -input=false -out=../build/p04/deploy.tfplan
-terraform -chdir=infra show ../build/p04/deploy.tfplan
+terraform -chdir=infra plan -input=false -out=../build/p05/deploy.tfplan
+terraform -chdir=infra show ../build/p05/deploy.tfplan
 ```
 
-P04 generated and inspected a fresh plan against the current account and local state, then applied the saved plan with 31 creations and no updates/deletions. It checked quotas and IAM permissions first. Before any later apply, review the root-volume lifecycle, routing and dependencies, security-group references, health settings, and rendered user data. The bootstrap matches the committed P02/P03 configuration byte for byte at 9,442 bytes, below EC2's 16 KiB limit. Generated plans, logs, rendered files, and state remain ignored; do not commit them.
+P04 generated and inspected a fresh plan against the current account and local state, then applied the saved plan with 31 creations and no updates/deletions. It checked quotas and IAM permissions first. Before any later apply, review the root-volume lifecycle, routing and dependencies, security-group references, health settings, and rendered user data. P05 renders 9,858 bytes of user data, below EC2's 16 KiB limit; the Nginx template changes intentionally replace the instance. Generated plans, logs, rendered files, and state remain ignored; do not commit them.
 
 After reviewing the saved plan, apply that exact file:
 
 ```sh
-terraform -chdir=infra apply ../build/p04/deploy.tfplan
+terraform -chdir=infra apply ../build/p05/deploy.tfplan
 terraform -chdir=infra output
 ```
 
-Preserve `infra/terraform.tfstate` and its backup locally until P06 migrates them. Losing state does not remove the running resources. P05 can use `alb_dns_name` as its CloudFront origin. Terraform finishing an apply does not confirm cloud-init or application readiness.
+Preserve `infra/terraform.tfstate` and its backup locally until P06 migrates them. Losing state does not remove the running resources. `alb_dns_name` identifies the CloudFront origin. The `cloudfront_distribution_id`, `cloudfront_url`, `author_url`, and `readiness_url` outputs identify the deployed distribution and public HTTPS endpoints. Terraform finishing an apply does not confirm cloud-init or application readiness.
 
 ## Running development stack
 
 | Item | Deployed value |
 | --- | --- |
-| Author | [Magnolia login](http://crescendo-exam-1001328653.eu-central-1.elb.amazonaws.com/magnoliaAuthor/) |
-| Readiness | [Magnolia readiness](http://crescendo-exam-1001328653.eu-central-1.elb.amazonaws.com/magnoliaAuthor/.rest/health/ready), exact HTTP 200 when ready |
-| Instance | `i-07fcc5e12ec293cdb`, private `10.42.10.96` |
-| Root volume | `vol-0ff200cdf4391daa8`, 30 GiB gp3, deleted on termination; unencrypted under the current account/AMI defaults |
+| Author | [Magnolia login](https://d2xpkbus8fu2t7.cloudfront.net/magnoliaAuthor/) |
+| Readiness | [Magnolia readiness](https://d2xpkbus8fu2t7.cloudfront.net/magnoliaAuthor/.rest/health/ready), exact HTTP 200 when ready |
+| CloudFront | `E178D8X4DHIIP9`, [distribution console](https://us-east-1.console.aws.amazon.com/cloudfront/v4/home?region=us-east-1#/distributions/E178D8X4DHIIP9) |
+| Instance | `i-03e2b17589905593d`, private `10.42.10.237` |
+| Root volume | `vol-0507e0dd3d123a7d3`, 30 GiB gp3, deleted on termination; unencrypted under the current account/AMI defaults |
 | VPC | `vpc-0dae6a3137091be57` |
 | NAT Gateway | `nat-083d0e0c9070b58d4`, EIP `18.195.185.6` |
 | ALB | `arn:aws:elasticloadbalancing:eu-central-1:317399646022:loadbalancer/app/crescendo-exam/5836054be05d28c9` |
 | Target group | `arn:aws:elasticloadbalancing:eu-central-1:317399646022:targetgroup/crescendo-exam-magnolia/b2a5f934ec75e3ed` |
 | Security groups | ALB `sg-0d2eb879407ba8780`; instance `sg-0b53b8f372914cf56` |
 
-The public author page returns HTTP 401 with Magnolia's login form until authenticated. `/` and `/magnoliaAuthor` redirect to `/magnoliaAuthor/`; the login CSS and images return 200 through the ALB. Readiness is unauthenticated and returns 200 only after the `magnolia-instance`, `datastore`, and `admin-setup` checks are UP. Do not enter credentials at the public HTTP URL. Browser HTTPS and authenticated behavior through CloudFront remain P05 checks.
+The CloudFront author page returns HTTP 401 with Magnolia's login form until authenticated. `/` and `/magnoliaAuthor` redirect to `/magnoliaAuthor/`; the login CSS and images return 200 through CloudFront and the ALB. Readiness is unauthenticated and returns 200 only after the `magnolia-instance`, `datastore`, and `admin-setup` checks are UP. Use only the CloudFront HTTPS URL for browser login. The ALB HTTP URL is an origin, not a browser entry point.
 
 P04 used AWS MCP Systems Manager Run Command to run `scripts/check-runtime.py` on the instance as root. It prints service/package/health results and resource measurements, and summarizes log markers without returning arbitrary log lines. The private login helper, `scripts/check-private-login.py`, runs only against loopback Nginx. It reads the local password into memory, submits the CSRF-protected form, checks session rotation and authenticated content, then logs out. Run it only in an authorized private SSM context; never paste credentials, cookies, response HTML, or unsanitized logs into evidence. The user authorized this local-file workflow as a P04 exception to the Secrets Manager/`asm-exec` rule after the required secret skill was loaded. No Secrets Manager resource or additional IAM access was added.
 
-Private checks passed for administrator login, AdminCentral, the initialized Travel page and REST node, six referenced content assets, and 95 installed modules. Login rotated the session; subsequent requests reused it, and logout restored HTTP 401. The session cookie was HttpOnly with path `/magnoliaAuthor`; Secure was false over local HTTP. Credentials and session cookies were never sent over the public HTTP connection. After reboot, private checks confirmed the same repository/sample identifier and password file, then repeated login, content, assets, sessions, and logout successfully. P07 owns the full content-retention and replacement demonstration.
+P04 private checks passed for administrator login, AdminCentral, the initialized Travel page and REST node, six referenced content assets, and 95 installed modules. Login rotated the session; subsequent requests reused it, and logout restored HTTP 401. The session cookie was HttpOnly with path `/magnoliaAuthor`; Secure was false over local HTTP. Credentials and session cookies were never sent over the public HTTP connection. After reboot, private checks confirmed the same repository/sample identifier and password file, then repeated login, content, assets, sessions, and logout successfully. P07 owns the full content-retention and replacement demonstration.
+
+## CloudFront and HTTPS
+
+CloudFront uses the existing ALB as a custom origin, `PriceClass_100`, pay-as-you-go pricing, the assigned `cloudfront.net` hostname, and its default certificate. Viewer HTTP requests redirect to HTTPS. The development origin policy is explicitly `http-only` on port 80: TLS terminates at CloudFront, so HTTPS in the address bar does not mean the origin connection is encrypted. HTTPS to the ALB would require a trusted origin certificate and a suitable domain; this exercise does not provision either. Nginx-to-Tomcat is HTTP on loopback. The default CloudFront certificate also retains AWS's default TLS security policy.
+
+The managed `CachingDisabled` policy sets minimum, default, and maximum TTLs to zero. A custom origin request policy forwards every viewer header (including Host, Authorization, Origin, Referer, and application CSRF headers), all cookies, and all query strings, plus CloudFront's generated viewer-protocol header. All seven supported HTTP methods are allowed, with request bodies forwarded normally. No path has a cache override. Custom error TTLs are zero for every configurable error status, without rewriting status codes or bodies. Nginx sends `Cache-Control: no-store, private` on application responses, readiness, redirects, and errors, replacing upstream cache directives. Browser caches and intermediary caches must not retain author responses or session cookies.
+
+Tomcat's loopback-only RemoteIpValve uses the restored viewer protocol to mark HTTPS requests secure and generate public HTTPS redirects and Secure session cookies. Magnolia keeps its login/session and CSRF handling. The managed CloudFront `SecurityHeadersPolicy` supplies HSTS, same-origin framing, content-type, and other browser headers. A new Content Security Policy is deferred because Magnolia's admin UI and previews need application-specific testing.
+
+CloudFront access logs, WAF/rate rules, a private VPC origin, distribution-specific origin authentication, and origin TLS are outside this small development deployment. CloudFront's managed address restriction reduces direct origin exposure but does not make the HTTP origin encrypted or bind it to a single distribution. Nginx has local access/error logs; CloudFront request logging and alerting are not configured. Keep these limits in mind before using real content or opening the environment to more users.
+
+P05 anonymous verification passed for HTTP-to-HTTPS redirects, relative Nginx root/context redirects, the exact 200 readiness response, repeated uncached 404s, the 401 login page, and three referenced login assets. The CSRF cookie is Secure and HttpOnly with path `/magnoliaAuthor`; spoofing viewer forwarding headers did not downgrade it. The browser rendered the styled login form over HTTPS and recovered from the startup 502 at the same URL. The ALB target is healthy, direct public ALB HTTP access times out under the prefix-list rule, and the post-deployment Terraform plan exits 0 with no changes. Authenticated session-cookie attributes and behavior are still unverified for P05.
+
+To repeat the anonymous check:
+
+```sh
+python3 scripts/check-cloudfront.py "$(terraform -chdir=infra output -raw cloudfront_url)"
+```
+
+`--authenticated` is restricted to an explicitly approved on-instance SSM run. It reads the local password in memory and submits it only to the verified CloudFront HTTPS hostname. Do not run it on a workstation or export credentials/cookies to perform the test. Until the P04 exception is extended, run only the anonymous mode. The checker returns sanitized status/count/attribute evidence and suppresses response bodies and exception messages.
 
 ## Application installation
 
@@ -181,7 +204,7 @@ locals {
 
 The instance uses `local.magnolia_user_data` as `user_data` and sets `user_data_replace_on_change = true`. The templates pin the package, ports, context, and paths together; changing those requires a reviewed template update. There are no credential inputs. See the [plan's interface contract](docs/plan.md#p02p03-interface) for network and health-check settings.
 
-Nginx listens on HTTP port 80 and proxies `/magnoliaAuthor/` unchanged to Tomcat on `127.0.0.1:8080`. `/` redirects to the author context. The ALB targets port 80 and checks `/magnoliaAuthor/.rest/health/ready` with success code `200` only. Magnolia's [readiness API](https://docs.magnolia-cms.com/product-docs/6.3/developing/api/health-check-api/) reports failed initialization with HTTP 503. Nginx forwards that response and never substitutes a static success page. Tomcat trusts forwarded protocol headers only from the local Nginx proxy, using its [Remote IP valve](https://tomcat.apache.org/tomcat-9.0-doc/config/valve.html#Remote_IP_Valve); Terraform restricts instance port 80 ingress to the ALB security group. P05 still needs to verify browser HTTPS, forwarded protocol, redirects, and sessions after choosing the origin connection policy.
+Nginx listens on HTTP port 80 and proxies `/magnoliaAuthor/` unchanged to Tomcat on `127.0.0.1:8080`. `/` redirects to the author context. The ALB targets port 80 and checks `/magnoliaAuthor/.rest/health/ready` with success code `200` only. Magnolia's [readiness API](https://docs.magnolia-cms.com/product-docs/6.3/developing/api/health-check-api/) reports failed initialization with HTTP 503. Nginx forwards that response and never substitutes a static success page. Tomcat trusts forwarded protocol headers only from the local Nginx proxy, using its [Remote IP valve](https://tomcat.apache.org/tomcat-9.0-doc/config/valve.html#Remote_IP_Valve); Terraform restricts instance port 80 ingress to the ALB security group. Nginx reads `CloudFront-Forwarded-Proto` and sends the validated protocol to Tomcat as `X-Forwarded-Proto`. It preserves the viewer `Host`. The ALB's own `X-Forwarded-Proto` reports the HTTP origin connection and is deliberately not used for the viewer protocol. Nginx returns relative root/context redirects with `absolute_redirect off`, so those redirects preserve browser HTTPS too.
 
 The bootstrap configures the services before starting them. On each boot, systemd starts Magnolia after the network, waits for an exact HTTP 200 from its readiness endpoint, then starts Nginx. The readiness helper tries 120 times with five-second pauses and five-second request timeouts. Startup can take up to about 20 minutes before that helper fails; the unit allows 25 minutes. Failed Magnolia processes restart with a delay and a bounded start rate. Nginx can continue returning an unhealthy response while Magnolia recovers. There is no ongoing background readiness poll beyond ALB health checks.
 
@@ -213,4 +236,4 @@ Magnolia logged an invalid-key-length fallback during first-run key generation; 
 
 This is a single author demo with embedded persistence and one root disk. It has no content backup, application high availability, or independent public publishing target. Java and Nginx package patch versions depend on the repositories at installation time; only Magnolia and bundled Tomcat are pinned here. The archive checksum was calculated from the official HTTPS download, rather than verified against a separate vendor signature. P04 confirmed initial login and initialized sample content. P07 must demonstrate retention of newly created content after reboot and fresh initialization after instance replacement.
 
-One instance means maintenance, replacement, or a failure interrupts the application. The ALB spans two zones, but the second private subnet has no standby instance. One NAT Gateway in zone `a` serves both private subnets; a NAT or zone outage removes their internet and Systems Manager access, and traffic from zone `b` crosses zones. There is no NAT failover. EC2, EBS, NAT processing, ALB, and public IPv4 addresses incur charges after deployment. The stack remains running and billable for P05. CloudFront, remote state, CI, and publication remain later tasks. When teardown is authorized, review `terraform -chdir=infra plan -destroy` and run `terraform -chdir=infra destroy` against the preserved state. Termination deletes the CMS data with the root disk.
+One instance means maintenance, replacement, or a failure interrupts the application. The ALB spans two zones, but the second private subnet has no standby instance. One NAT Gateway in zone `a` serves both private subnets; a NAT or zone outage removes their internet and Systems Manager access, and traffic from zone `b` crosses zones. There is no NAT failover. EC2, EBS, NAT processing, ALB, and public IPv4 addresses incur charges after deployment. The stack remains running and billable. CloudFront adds request and transfer charges; remote state, CI, and publication remain later tasks. When teardown is authorized, review `terraform -chdir=infra plan -destroy` and run `terraform -chdir=infra destroy` against the preserved state. Termination deletes the CMS data with the root disk.

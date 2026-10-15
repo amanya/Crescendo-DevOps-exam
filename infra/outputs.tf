@@ -34,7 +34,7 @@ output "ubuntu_ami_id" {
 }
 
 output "alb_dns_name" {
-  description = "Public ALB hostname for P04 checks and the later CloudFront origin."
+  description = "ALB origin hostname; ingress is restricted to CloudFront addresses."
   value       = aws_lb.main.dns_name
 }
 
@@ -49,11 +49,21 @@ output "target_group_arn" {
 }
 
 output "author_url" {
-  description = "HTTP author URL for P04 integration; browser HTTPS belongs to P05."
-  value       = "http://${aws_lb.main.dns_name}/magnoliaAuthor/"
+  description = "Public HTTPS author URL through CloudFront."
+  value       = "https://${aws_cloudfront_distribution.magnolia.domain_name}/magnoliaAuthor/"
 }
 
 output "readiness_url" {
   description = "Readiness URL; only HTTP 200 means Magnolia is ready."
-  value       = "http://${aws_lb.main.dns_name}/magnoliaAuthor/.rest/health/ready"
+  value       = "https://${aws_cloudfront_distribution.magnolia.domain_name}/magnoliaAuthor/.rest/health/ready"
+}
+
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution for deployment status checks."
+  value       = aws_cloudfront_distribution.magnolia.id
+}
+
+output "cloudfront_url" {
+  description = "Public HTTPS entry point using the default CloudFront certificate."
+  value       = "https://${aws_cloudfront_distribution.magnolia.domain_name}"
 }
