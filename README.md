@@ -4,7 +4,7 @@ Deploy Magnolia Community Edition on AWS with Terraform for the Crescendo DevOps
 
 ## Current status
 
-P01 through P04 are verified. P05 is in progress: CloudFront and the proxy changes are deployed in account `317399646022`, region `eu-central-1`, on 2026-10-15. The login page renders over HTTPS, readiness is exact 200, the ALB target is healthy, and Terraform reports no drift. Authenticated CloudFront checks await permission to extend P04's loopback-only password-file exception. The instance replacement intentionally started a fresh CMS. Remote state and CI belong to P06.
+P01 through P05 are Verified. CloudFront serves Magnolia at the HTTPS URL below in account `317399646022`, region `eu-central-1`. On 2026-10-15, authenticated browser and HTTP checks passed for login, CSRF protection, AdminCentral, Travel content/assets, session reuse, anonymous isolation, and logout. The ALB target is healthy, CloudFront is Deployed, and the final Terraform plan reports no changes. P06 is Ready; P07 waits for P06. The P05 instance replacement intentionally started a fresh CMS.
 
 The infrastructure uses two public and two private subnets across two availability zones, one NAT Gateway, and one private EC2 instance. The OS, software, and CMS data share one EBS root volume, deleted on termination. Instance replacement reinstalls the application and starts a fresh CMS. EBS encryption follows the AWS account and AMI defaults.
 
@@ -64,6 +64,7 @@ scripts/check-provisioning.py  Local template and archive checks
 scripts/check-runtime.py       Sanitized on-instance diagnostics
 scripts/check-private-login.py  SSM/loopback login, content, and session checks
 scripts/check-cloudfront.py     Sanitized public HTTPS and on-instance session checks
+scripts/check-cloudfront-browser.py  On-instance headless browser acceptance checks
 ```
 
 ## Infrastructure and sizing
@@ -151,7 +152,7 @@ Tomcat's loopback-only RemoteIpValve uses the restored viewer protocol to mark H
 
 CloudFront access logs, WAF/rate rules, a private VPC origin, distribution-specific origin authentication, and origin TLS are outside this small development deployment. CloudFront's managed address restriction reduces direct origin exposure but does not make the HTTP origin encrypted or bind it to a single distribution. Nginx has local access/error logs; CloudFront request logging and alerting are not configured. Keep these limits in mind before using real content or opening the environment to more users.
 
-P05 anonymous verification passed for HTTP-to-HTTPS redirects, relative Nginx root/context redirects, the exact 200 readiness response, repeated uncached 404s, the 401 login page, and three referenced login assets. The CSRF cookie is Secure and HttpOnly with path `/magnoliaAuthor`; spoofing viewer forwarding headers did not downgrade it. The browser rendered the styled login form over HTTPS and recovered from the startup 502 at the same URL. The ALB target is healthy, direct public ALB HTTP access times out under the prefix-list rule, and the post-deployment Terraform plan exits 0 with no changes. Authenticated session-cookie attributes and behavior are still unverified for P05.
+P05 anonymous verification passed for HTTP-to-HTTPS redirects, relative Nginx root/context redirects, the exact 200 readiness response, repeated uncached 404s, the 401 login page, and three referenced login assets. The CSRF cookie is Secure and HttpOnly with path `/magnoliaAuthor`; spoofing viewer forwarding headers did not downgrade it. The browser rendered the styled login form over HTTPS and recovered from the startup 502 at the same URL. The ALB target is healthy, direct public ALB HTTP access times out under the prefix-list rule, and the post-deployment Terraform plan exits 0 with no changes. The approved on-instance authenticated HTTP check also passed CSRF rejection, login with a new session, AdminCentral, Travel page/node, six sample assets, module queries, session reuse, three independent anonymous clients, and logout. The exact authenticated URLs stayed inaccessible to anonymous clients, with no reused authenticated cookies or cache hits.
 
 To repeat the anonymous check:
 
@@ -159,7 +160,13 @@ To repeat the anonymous check:
 python3 scripts/check-cloudfront.py "$(terraform -chdir=infra output -raw cloudfront_url)"
 ```
 
-`--authenticated` is restricted to an explicitly approved on-instance SSM run. It reads the local password in memory and submits it only to the verified CloudFront HTTPS hostname. Do not run it on a workstation or export credentials/cookies to perform the test. Until the P04 exception is extended, run only the anonymous mode. The checker returns sanitized status/count/attribute evidence and suppresses response bodies and exception messages.
+`--authenticated` is restricted to an explicitly approved on-instance SSM run. It reads the local password in memory and submits it only to the verified CloudFront HTTPS hostname. Do not run it on a workstation or export credentials/cookies to perform the test. The user explicitly extended the P04 exception for P05 to this verified CloudFront HTTPS destination, with credentials/cookies held in memory on EC2 and only sanitized evidence returned. This does not authorize exporting them to a workstation or submitting them elsewhere. The checker returns sanitized status/count/attribute evidence and suppresses response bodies and exception messages.
+
+The on-instance headless Chromium check, `scripts/check-cloudfront-browser.py`, passed with Playwright 1.64.0. It rendered AdminCentral's Pages and Assets apps, displayed Travel content and images, retained the session across page navigation and reload, kept a separate browser context anonymous, and returned to login after logout and a subsequent request. Every document navigation stayed on the CloudFront HTTPS hostname. It found no HTTP asset URLs, ALB URL leaks, mixed-content errors, or JavaScript page errors. Chromium reported the session cookie as Secure, HttpOnly, path `/magnoliaAuthor`, and SameSite=Lax.
+
+The browser test permits network requests only to this stack's CloudFront HTTPS origin. It intentionally blocked optional Travel-demo assets at `fonts.googleapis.com`, `cdn.jsdelivr.net`, and `static.addtoany.com`; those third-party fonts/widgets were not verified. Local sample content and images rendered successfully. The checker fails on any unexpected destination, HTTP downgrade, or document navigation outside the approved origin. No tracing, video, HAR, persistent browser profile, or cookie-state export is enabled. Playwright/Chromium are temporary test tooling, not part of provisioning; an approved repeat run needs those tools on the instance.
+
+A [sanitized AdminCentral screenshot](docs/evidence/p05-admincentral.jpg) records the rendered app launcher after CloudFront HTTPS login. It contains no credentials, cookies, or tokens.
 
 ## Application installation
 
