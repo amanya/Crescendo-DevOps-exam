@@ -205,6 +205,8 @@ Give remote-state bootstrap configuration a small directory of its own if needed
 
 ## Review checkpoints
 
+README diagram clarity review (2026-10-15): Verified. Split browser requests, outbound access/Systems Manager, and Terraform/CI into three diagrams. Ubuntu package repositories, the Magnolia download server, and Systems Manager APIs now have separate labels. Nginx and Tomcat/Magnolia are grouped inside one EC2 instance; the Internet Gateway is attached to the VPC rather than placed in a subnet. Cross-checked against the network, compute, ALB, bootstrap IAM, and Nginx definitions. All three diagrams parsed and rendered with Mermaid 11 and passed visual inspection; Markdown fences, local file links, and `git diff --check` pass. HTTP origin hops, security-group restrictions, the empty second private subnet, single-zone limits, and disk lifecycle remain documented. Only README and plan changed. No blocker; P07's next step remains user-managed reviewer invitations and submission.
+
 1. After foundation and application planning, review the installation choices, file layout, and initial Terraform plan.
 2. Once Magnolia runs through CloudFront, review the deployment and the decisions behind it.
 3. Review a successful CI run on a PR and the reboot/replacement evidence.

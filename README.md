@@ -12,38 +12,60 @@ See [the plan](docs/plan.md) for scope, acceptance criteria, validation evidence
 
 ## Architecture
 
+### Browser requests
+
 ```mermaid
 flowchart TD
-    Browser[Browser] -->|HTTPS, default certificate| CF[CloudFront: caching disabled]
-    CF -->|HTTP 80, origin-facing prefix list| ALB
-    subgraph VPC[eu-central-1 VPC 10.42.0.0/16]
-        subgraph Public[Public subnets in zones a and b]
-            ALB[Application Load Balancer across both zones]
-            NAT[NAT Gateway and EIP in zone a]
-            IGW[Internet Gateway]
+    Browser[Browser] -->|HTTPS| CF["CloudFront<br/>Default certificate, caching disabled"]
+    CF -->|HTTP 80| ALB
+    subgraph VPC["VPC 10.42.0.0/16 · eu-central-1"]
+        subgraph Public["Public subnets · zones a and b"]
+            ALB[Application Load Balancer]
         end
-        subgraph PrivateA[Private subnet in zone a]
-            Nginx[Nginx on EC2: port 80]
-            CMS[Tomcat and Magnolia: loopback 8080]
-            Disk[One 30 GiB gp3 root: OS, software, CMS]
-            Nginx --> CMS
-            CMS --- Disk
+        subgraph PrivateA["Private subnet · zone a"]
+            subgraph EC2["One EC2 instance · Ubuntu · no public IP"]
+                Nginx["Nginx<br/>Port 80"] -->|HTTP 127.0.0.1:8080| CMS["Tomcat + Magnolia"]
+                CMS --- Disk["EBS root volume · 30 GiB gp3<br/>OS, software, CMS data"]
+            end
         end
-        PrivateB[Private subnet in zone b: no instance]
-        ALB -->|HTTP 80, ALB security group only| Nginx
-        Nginx -->|Outbound HTTP and HTTPS| NAT
-        PrivateB --> NAT
-        NAT --> IGW
+        ALB -->|HTTP 80| Nginx
     end
-    IGW --> Downloads[Ubuntu, Magnolia downloads, SSM APIs]
-    Operator[Operator with default profile] -->|SSM via outbound agent| Nginx
-    Actions[Trusted GitHub PR workflow, OIDC] --> Role[Read-only AWS planning role]
-    Role --> State[Versioned private S3 workload state and native lock]
-    Terraform[Local Terraform deployment] --> State
-    Terraform --> VPC
 ```
 
-The ALB spans two zones; the application and NAT each run in one zone. Reboot retains the root disk. Instance replacement deletes it and rebuilds Magnolia with a fresh repository. The bootstrap Terraform root owns the state bucket and CI identity separately from the workload.
+The ALB accepts port 80 only from the CloudFront origin-facing prefix list; EC2 accepts port 80 only from the ALB security group. Tomcat listens on loopback inside the same instance. TLS terminates at CloudFront; both origin hops use HTTP.
+
+The ALB spans two zones, but the application runs in one zone. The second private subnet in zone b has no instance. Reboot retains the root disk. Instance replacement deletes it and rebuilds Magnolia with a fresh repository.
+
+### Outbound access and administration
+
+Ubuntu packages, the Magnolia installer, and Systems Manager are external destinations contacted by the instance. Downloads happen during provisioning; the SSM Agent uses outbound HTTPS for management.
+
+```mermaid
+flowchart TD
+    subgraph VPC["VPC · eu-central-1"]
+        Instance["Private EC2 instance<br/>Bootstrap + SSM Agent"] -->|Outbound HTTP / HTTPS| NAT["NAT Gateway + Elastic IP<br/>Public subnet · zone a"]
+        NAT --> IGW["Internet Gateway<br/>Attached to the VPC"]
+    end
+    IGW -->|HTTP / HTTPS| Ubuntu["Ubuntu package repositories"]
+    IGW -->|HTTPS| Magnolia["Magnolia download server"]
+    IGW -->|HTTPS| SSM["AWS Systems Manager APIs"]
+    Operator["Operator · default AWS profile"] -->|Management requests| SSM
+```
+
+Both private subnets route outbound traffic through the single NAT Gateway in zone a. Systems Manager carries management traffic over connections initiated by the SSM Agent; EC2 needs no inbound management port.
+
+### Terraform and PR checks
+
+```mermaid
+flowchart LR
+    Local["Local Terraform<br/>default AWS profile"] -->|Deploy| Workload["AWS workload resources"]
+    Actions["Trusted GitHub PR workflow"] -->|OIDC| Role["AWS planning role"]
+    Role -->|Read resources for plan| Workload
+    Local --> State["Private versioned S3 state<br/>Native state lock"]
+    Role --> State
+```
+
+Deployment runs locally. Trusted PR checks read AWS resources and workload state to produce a plan; the role can manage the state lock but cannot apply infrastructure changes. The separate bootstrap Terraform root owns the state bucket and CI identity.
 
 ## Prerequisites
 
